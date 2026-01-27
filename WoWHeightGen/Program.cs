@@ -1,4 +1,5 @@
 ﻿using CASCLib;
+using Microsoft.Win32;
 using SereniaBLPLib;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
@@ -40,37 +41,95 @@ namespace WoWHeightGen // Note: actual namespace depends on the project name.
             while (true)
             {
                 Console.WriteLine("Type \"exit\" to quit.");
+                Console.WriteLine();
+
+                // Try to detect installations from registry
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine("Scanning for WoW installations...");
+                Console.ResetColor();
+
+                var detectedInstalls = WowInstallationDetector.DetectInstallations();
+
+                if (detectedInstalls.Count > 0)
+                {
+                    Console.ForegroundColor = ConsoleColor.Green;
+                    Console.WriteLine($"Found {detectedInstalls.Count} WoW installation(s).");
+                    Console.ResetColor();
+                    Console.WriteLine();
+
+                    var selected = InteractiveConsoleSelector.SelectFromList(
+                        detectedInstalls,
+                        install => install.DisplayName,
+                        "Select a WoW installation (Up/Down to navigate, Enter to select, Esc for manual):"
+                    );
+
+                    if (selected != null)
+                    {
+                        installPath = selected.InstallPath;
+                        product = selected.ProductInfo.Product;
+
+                        Console.WriteLine();
+                        Console.ForegroundColor = ConsoleColor.Green;
+                        Console.WriteLine($"Selected: {selected.DisplayName}");
+                        Console.ResetColor();
+
+                        // Try to initialize CASC with the selected installation
+                        if (TryInitializeCASC())
+                            return;
+
+                        // If initialization failed, loop back to try again
+                        continue;
+                    }
+                    // If user pressed Escape, fall through to manual input
+                }
+                else
+                {
+                    Console.ForegroundColor = ConsoleColor.Yellow;
+                    Console.WriteLine("No WoW installations detected via registry.");
+                    Console.ResetColor();
+                    Console.WriteLine();
+                }
+
+                // Manual input (existing code)
                 PrintInfo("Enter WoW install path. Eg: ", "D:/Games/World of Warcraft");
-                Console.WriteLine("");
+                Console.WriteLine();
                 if (GetConsoleString(out installPath)) continue;
 
                 PrintInfo("Enter product. Eg: ", "wow, wowt, wow_beta");
                 if (GetConsoleString(out product)) continue;
 
-                try
-                {
-                    Console.ForegroundColor = ConsoleColor.Yellow;
-                    Console.WriteLine("Initializing CASCLib.");
-                    Console.ResetColor();
+                if (TryInitializeCASC())
+                    return;
+            }
+        }
 
-                    cascConfig = CASCConfig.LoadLocalStorageConfig(installPath, product);
-                    cascHandler = CASCHandler.OpenStorage(cascConfig);
-                    versionName = cascConfig.VersionName;
+        static bool TryInitializeCASC()
+        {
+            try
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine("Initializing CASCLib...");
+                Console.ResetColor();
 
-                    wowRootHandler = cascHandler.Root as WowRootHandler;
-                    if (wowRootHandler != null)
-                    {
-                        wowRootHandler.SetFlags(firstInstalledLocale, false);
-                        return;
-                    }
-                }
-                catch (Exception ex)
+                cascConfig = CASCConfig.LoadLocalStorageConfig(installPath, product);
+                cascHandler = CASCHandler.OpenStorage(cascConfig);
+                versionName = cascConfig.VersionName;
+
+                wowRootHandler = cascHandler.Root as WowRootHandler;
+                if (wowRootHandler != null)
                 {
-                    Console.ForegroundColor = ConsoleColor.Red;
-                    Console.WriteLine(ex.Message.ToString());
-                    Console.ResetColor();
-                    continue;
+                    wowRootHandler.SetFlags(firstInstalledLocale, false);
+                    return true;
                 }
+
+                return false;
+            }
+            catch (Exception ex)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine(ex.Message.ToString());
+                Console.ResetColor();
+                return false;
             }
         }
 
