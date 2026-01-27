@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Silk.NET" Version="2.22.0" />
+    <PackageReference Include="Silk.NET.OpenGL" Version="2.22.0" />
+    <PackageReference Include="Silk.NET.OpenGL.Extensions.ImGui" Version="2.22.0" />
+    <PackageReference Include="Silk.NET.Input" Version="2.22.0" />
+    <PackageReference Include="Silk.NET.Windowing" Version="2.22.0" />
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
+    <PackageReference Include="DBCD" Version="2.2.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\WoWHeightGenLib\WoWHeightGenLib.csproj" />
+    <ProjectReference Include="..\SereniaBLPLib\SereniaBLPLib\SereniaBLPLib.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Rendering\Shaders\*.vert" />
+    <EmbeddedResource Include="Rendering\Shaders\*.frag" />
+  </ItemGroup>
+
+</Project>
