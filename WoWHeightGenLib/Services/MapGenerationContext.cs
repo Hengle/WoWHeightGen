@@ -1,16 +1,14 @@
-using CASCLib;
 using TACTSharp;
 using WoWHeightGenLib.Configuration;
 
 namespace WoWHeightGenLib.Services
 {
     /// <summary>
-    /// Manages the context for map generation operations, including CASC handler and configuration.
+    /// Manages the context for map generation operations using TACTSharp for file access.
     /// </summary>
     public class MapGenerationContext : IDisposable
     {
         private readonly Dictionary<uint, (byte, byte, byte)> _areaColorTable = new();
-        private readonly bool _useTACTSharp = true; // Feature flag for testing
 
         /// <summary>
         /// Gets the configuration settings for map generation.
@@ -28,27 +26,12 @@ namespace WoWHeightGenLib.Services
         public string Product { get; }
 
         /// <summary>
-        /// Gets the version name from the CASC configuration.
+        /// Gets the version name from the build configuration.
         /// </summary>
         public string VersionName { get; private set; } = string.Empty;
 
         /// <summary>
-        /// Gets the CASC configuration.
-        /// </summary>
-        public CASCConfig? CascConfig { get; private set; }
-
-        /// <summary>
-        /// Gets the CASC handler for file operations.
-        /// </summary>
-        public CASCHandler? CascHandler { get; private set; }
-
-        /// <summary>
-        /// Gets the WoW-specific root handler.
-        /// </summary>
-        public WowRootHandler? WowRootHandler { get; private set; }
-
-        /// <summary>
-        /// Gets the TACTSharp build instance (when using TACTSharp).
+        /// Gets the TACTSharp build instance for file operations.
         /// </summary>
         public BuildInstance? Build { get; private set; }
 
@@ -69,34 +52,15 @@ namespace WoWHeightGenLib.Services
         }
 
         /// <summary>
-        /// Initializes the CASC handler and configuration.
+        /// Initializes the TACTSharp build instance and loads configuration.
         /// </summary>
         public void Initialize()
-        {
-            if (_useTACTSharp)
-                InitializeWithTACTSharp();
-            else
-                InitializeWithCascLib();
-        }
-
-        private void InitializeWithCascLib()
-        {
-            CascConfig = CASCConfig.LoadLocalStorageConfig(InstallPath, Product);
-            CascHandler = CASCHandler.OpenStorage(CascConfig);
-            VersionName = CascConfig.VersionName;
-
-            WowRootHandler = CascHandler.Root as WowRootHandler
-                ?? throw new InvalidOperationException("Invalid WoW root handler");
-            WowRootHandler.SetFlags(Config.FirstInstalledLocale, false);
-        }
-
-        private void InitializeWithTACTSharp()
         {
             // Step 1: Initialize build instance and configure settings
             Build = new BuildInstance();
             Build.Settings.BaseDir = InstallPath;
             Build.Settings.Product = Product.ToLowerInvariant();
-            Build.Settings.Locale = ConvertToTACTLocale(Config.FirstInstalledLocale);
+            Build.Settings.Locale = Config.FirstInstalledLocale;
 
             // Step 2: Discover config files from .build.info
             var (buildConfig, cdnConfig) = DiscoverConfigFiles(InstallPath, Product);
@@ -107,31 +71,6 @@ namespace WoWHeightGenLib.Services
 
             // Step 4: Extract version name
             VersionName = ExtractVersionName(Build);
-        }
-
-        private RootInstance.LocaleFlags ConvertToTACTLocale(CASCLib.LocaleFlags cascLocale)
-        {
-            // Map CascLib.LocaleFlags to TACTSharp.RootInstance.LocaleFlags
-            // Both enums use the same flag values
-            return cascLocale switch
-            {
-                CASCLib.LocaleFlags.enUS => RootInstance.LocaleFlags.enUS,
-                CASCLib.LocaleFlags.koKR => RootInstance.LocaleFlags.koKR,
-                CASCLib.LocaleFlags.frFR => RootInstance.LocaleFlags.frFR,
-                CASCLib.LocaleFlags.deDE => RootInstance.LocaleFlags.deDE,
-                CASCLib.LocaleFlags.zhCN => RootInstance.LocaleFlags.zhCN,
-                CASCLib.LocaleFlags.esES => RootInstance.LocaleFlags.esES,
-                CASCLib.LocaleFlags.zhTW => RootInstance.LocaleFlags.zhTW,
-                CASCLib.LocaleFlags.enGB => RootInstance.LocaleFlags.enGB,
-                CASCLib.LocaleFlags.enCN => RootInstance.LocaleFlags.enCN,
-                CASCLib.LocaleFlags.enTW => RootInstance.LocaleFlags.enTW,
-                CASCLib.LocaleFlags.esMX => RootInstance.LocaleFlags.esMX,
-                CASCLib.LocaleFlags.ruRU => RootInstance.LocaleFlags.ruRU,
-                CASCLib.LocaleFlags.ptBR => RootInstance.LocaleFlags.ptBR,
-                CASCLib.LocaleFlags.itIT => RootInstance.LocaleFlags.itIT,
-                CASCLib.LocaleFlags.ptPT => RootInstance.LocaleFlags.ptPT,
-                _ => RootInstance.LocaleFlags.enUS // Default fallback
-            };
         }
 
         private (string buildConfig, string cdnConfig) DiscoverConfigFiles(string installPath, string product)
@@ -218,10 +157,7 @@ namespace WoWHeightGenLib.Services
         /// <returns>True if the file exists, false otherwise.</returns>
         public bool FileExists(uint fileDataID)
         {
-            if (_useTACTSharp)
-                return Build?.Root?.FileExists(fileDataID) ?? false;
-            else
-                return CascHandler?.FileExists((int)fileDataID) ?? false;
+            return Build?.Root?.FileExists(fileDataID) ?? false;
         }
 
         /// <summary>
@@ -231,21 +167,11 @@ namespace WoWHeightGenLib.Services
         /// <returns>A stream containing the file data.</returns>
         public Stream OpenFile(uint fileDataID)
         {
-            if (_useTACTSharp)
-            {
-                if (Build == null)
-                    throw new InvalidOperationException("Build not initialized");
+            if (Build == null)
+                throw new InvalidOperationException("Build not initialized");
 
-                byte[] fileData = Build.OpenFileByFDID(fileDataID);
-                return new MemoryStream(fileData);
-            }
-            else
-            {
-                if (CascHandler == null)
-                    throw new InvalidOperationException("CascHandler not initialized");
-
-                return CascHandler.OpenFile((int)fileDataID);
-            }
+            byte[] fileData = Build.OpenFileByFDID(fileDataID);
+            return new MemoryStream(fileData);
         }
 
         /// <summary>

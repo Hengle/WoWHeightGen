@@ -1,4 +1,4 @@
-using CASCLib;
+using TACTSharp;
 
 namespace WoWHeightGenLib.Configuration
 {
@@ -10,7 +10,7 @@ namespace WoWHeightGenLib.Configuration
         /// <summary>
         /// The default locale to use for WoW data files.
         /// </summary>
-        public LocaleFlags FirstInstalledLocale { get; set; } = LocaleFlags.enUS;
+        public RootInstance.LocaleFlags FirstInstalledLocale { get; set; } = RootInstance.LocaleFlags.enUS;
 
         /// <summary>
         /// The output directory path for generated map images.

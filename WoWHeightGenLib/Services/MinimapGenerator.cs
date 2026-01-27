@@ -31,10 +31,9 @@ namespace WoWHeightGenLib.Services
             if (!Directory.Exists(_context.Config.OutputPath))
                 Directory.CreateDirectory(_context.Config.OutputPath);
 
-            if (_context.CascHandler == null) return;
-            if (!_context.CascHandler.FileExists(wdtFileID)) return;
+            if (!_context.FileExists((uint)wdtFileID)) return;
 
-            using var wdtStream = _context.CascHandler.OpenFile(wdtFileID);
+            using var wdtStream = _context.OpenFile((uint)wdtFileID);
             var wdt = new Wdt(wdtStream);
 
             if (wdt.fileInfo == null) return;
@@ -53,7 +52,6 @@ namespace WoWHeightGenLib.Services
 
         private int GetMinimapResolution(Wdt wdt)
         {
-            if (_context.CascHandler == null) return 0;
             if (wdt.fileInfo == null) return 0;
 
             for (var y = 0; y < _context.Config.MapSize; y++)
@@ -61,11 +59,11 @@ namespace WoWHeightGenLib.Services
                 for (var x = 0; x < _context.Config.MapSize; x++)
                 {
                     var info = wdt.fileInfo[x, y];
-                    int minimapFileID = (int)info.minimapTexture;
+                    uint minimapFileID = info.minimapTexture;
 
-                    if (_context.CascHandler.FileExists(minimapFileID))
+                    if (_context.FileExists(minimapFileID))
                     {
-                        using var blpStream = _context.CascHandler.OpenFile(minimapFileID);
+                        using var blpStream = _context.OpenFile(minimapFileID);
                         var blp = new BlpFile(blpStream);
                         var img = blp.GetImage(0);
                         return img?.Width ?? 256;
@@ -85,11 +83,11 @@ namespace WoWHeightGenLib.Services
                 for (var x = 0; x < _context.Config.MapSize; x++)
                 {
                     var info = wdt.fileInfo[x, y];
-                    int minimapFileID = (int)info.minimapTexture;
+                    uint minimapFileID = info.minimapTexture;
 
-                    if (_context.CascHandler!.FileExists(minimapFileID))
+                    if (_context.FileExists(minimapFileID))
                     {
-                        using var blpStream = _context.CascHandler.OpenFile(minimapFileID);
+                        using var blpStream = _context.OpenFile(minimapFileID);
                         var blp = new BlpFile(blpStream);
                         var img = blp.GetImage(0);
 

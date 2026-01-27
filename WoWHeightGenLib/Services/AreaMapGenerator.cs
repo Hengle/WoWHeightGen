@@ -30,14 +30,13 @@ namespace WoWHeightGenLib.Services
             if (!Directory.Exists(_context.Config.OutputPath))
                 Directory.CreateDirectory(_context.Config.OutputPath);
 
-            if (_context.CascHandler == null) return;
-            if (!_context.CascHandler.FileExists(wdtFileID)) return;
+            if (!_context.FileExists((uint)wdtFileID)) return;
 
             using var outputImage = new Image<Rgba32>(
                 _context.Config.HeightMapResolution,
                 _context.Config.HeightMapResolution);
 
-            using var wdtStream = _context.CascHandler.OpenFile(wdtFileID);
+            using var wdtStream = _context.OpenFile((uint)wdtFileID);
             var wdt = new Wdt(wdtStream);
             var adts = LoadAdtGrid(wdt);
 
@@ -60,11 +59,11 @@ namespace WoWHeightGenLib.Services
                 for (var x = 0; x < _context.Config.MapSize; x++)
                 {
                     var info = wdt.fileInfo[x, y];
-                    int adtFileID = (int)info.rootADT;
+                    uint adtFileID = info.rootADT;
 
-                    if (_context.CascHandler!.FileExists(adtFileID))
+                    if (_context.FileExists(adtFileID))
                     {
-                        using var adtStream = _context.CascHandler.OpenFile(adtFileID);
+                        using var adtStream = _context.OpenFile(adtFileID);
                         adts[x, y] = new Adt(adtStream);
                     }
                 }
