@@ -1,4 +1,5 @@
 using CASCLib;
+using TACTSharp;
 using WoWHeightGenLib.Configuration;
 
 namespace WoWHeightGenLib.Services
@@ -9,6 +10,7 @@ namespace WoWHeightGenLib.Services
     public class MapGenerationContext : IDisposable
     {
         private readonly Dictionary<uint, (byte, byte, byte)> _areaColorTable = new();
+        private readonly bool _useTACTSharp = true; // Feature flag for testing
 
         /// <summary>
         /// Gets the configuration settings for map generation.
@@ -46,6 +48,11 @@ namespace WoWHeightGenLib.Services
         public WowRootHandler? WowRootHandler { get; private set; }
 
         /// <summary>
+        /// Gets the TACTSharp build instance (when using TACTSharp).
+        /// </summary>
+        public BuildInstance? Build { get; private set; }
+
+        /// <summary>
         /// Initializes a new instance of the MapGenerationContext class.
         /// </summary>
         /// <param name="installPath">The WoW installation path.</param>
@@ -66,6 +73,14 @@ namespace WoWHeightGenLib.Services
         /// </summary>
         public void Initialize()
         {
+            if (_useTACTSharp)
+                InitializeWithTACTSharp();
+            else
+                InitializeWithCascLib();
+        }
+
+        private void InitializeWithCascLib()
+        {
             CascConfig = CASCConfig.LoadLocalStorageConfig(InstallPath, Product);
             CascHandler = CASCHandler.OpenStorage(CascConfig);
             VersionName = CascConfig.VersionName;
@@ -73,6 +88,164 @@ namespace WoWHeightGenLib.Services
             WowRootHandler = CascHandler.Root as WowRootHandler
                 ?? throw new InvalidOperationException("Invalid WoW root handler");
             WowRootHandler.SetFlags(Config.FirstInstalledLocale, false);
+        }
+
+        private void InitializeWithTACTSharp()
+        {
+            // Step 1: Initialize build instance and configure settings
+            Build = new BuildInstance();
+            Build.Settings.BaseDir = InstallPath;
+            Build.Settings.Product = Product.ToLowerInvariant();
+            Build.Settings.Locale = ConvertToTACTLocale(Config.FirstInstalledLocale);
+
+            // Step 2: Discover config files from .build.info
+            var (buildConfig, cdnConfig) = DiscoverConfigFiles(InstallPath, Product);
+
+            // Step 3: Load configs and build
+            Build.LoadConfigs(buildConfig, cdnConfig);
+            Build.Load();
+
+            // Step 4: Extract version name
+            VersionName = ExtractVersionName(Build);
+        }
+
+        private RootInstance.LocaleFlags ConvertToTACTLocale(CASCLib.LocaleFlags cascLocale)
+        {
+            // Map CascLib.LocaleFlags to TACTSharp.RootInstance.LocaleFlags
+            // Both enums use the same flag values
+            return cascLocale switch
+            {
+                CASCLib.LocaleFlags.enUS => RootInstance.LocaleFlags.enUS,
+                CASCLib.LocaleFlags.koKR => RootInstance.LocaleFlags.koKR,
+                CASCLib.LocaleFlags.frFR => RootInstance.LocaleFlags.frFR,
+                CASCLib.LocaleFlags.deDE => RootInstance.LocaleFlags.deDE,
+                CASCLib.LocaleFlags.zhCN => RootInstance.LocaleFlags.zhCN,
+                CASCLib.LocaleFlags.esES => RootInstance.LocaleFlags.esES,
+                CASCLib.LocaleFlags.zhTW => RootInstance.LocaleFlags.zhTW,
+                CASCLib.LocaleFlags.enGB => RootInstance.LocaleFlags.enGB,
+                CASCLib.LocaleFlags.enCN => RootInstance.LocaleFlags.enCN,
+                CASCLib.LocaleFlags.enTW => RootInstance.LocaleFlags.enTW,
+                CASCLib.LocaleFlags.esMX => RootInstance.LocaleFlags.esMX,
+                CASCLib.LocaleFlags.ruRU => RootInstance.LocaleFlags.ruRU,
+                CASCLib.LocaleFlags.ptBR => RootInstance.LocaleFlags.ptBR,
+                CASCLib.LocaleFlags.itIT => RootInstance.LocaleFlags.itIT,
+                CASCLib.LocaleFlags.ptPT => RootInstance.LocaleFlags.ptPT,
+                _ => RootInstance.LocaleFlags.enUS // Default fallback
+            };
+        }
+
+        private (string buildConfig, string cdnConfig) DiscoverConfigFiles(string installPath, string product)
+        {
+            // Parse .build.info to get config hashes
+            string buildInfoPath = Path.Combine(installPath, ".build.info");
+
+            if (!File.Exists(buildInfoPath))
+                throw new FileNotFoundException($".build.info not found at {buildInfoPath}");
+
+            // Read and parse .build.info
+            var lines = File.ReadAllLines(buildInfoPath);
+            if (lines.Length < 2)
+                throw new InvalidDataException(".build.info has insufficient data");
+
+            // Parse header line to get column indices
+            var headers = lines[0].Split('|');
+            var headerMap = new Dictionary<string, int>();
+            for (int i = 0; i < headers.Length; i++)
+            {
+                var headerName = headers[i].Split('!')[0];
+                headerMap[headerName] = i;
+            }
+
+            // Find the matching product line
+            for (int i = 1; i < lines.Length; i++)
+            {
+                var values = lines[i].Split('|');
+
+                // Check if Product column exists and matches
+                if (headerMap.TryGetValue("Product", out int productIdx) &&
+                    values[productIdx].Equals(product, StringComparison.OrdinalIgnoreCase))
+                {
+                    string buildKey = values[headerMap["Build Key"]];
+                    string cdnKey = values[headerMap["CDN Key"]];
+
+                    // Determine data folder (usually "Data" for WoW)
+                    string dataFolder = "Data";
+
+                    // Construct config file paths using the hash structure
+                    string buildCfgPath = Path.Combine(installPath, dataFolder, "config",
+                        buildKey.Substring(0, 2), buildKey.Substring(2, 2), buildKey);
+                    string cdnCfgPath = Path.Combine(installPath, dataFolder, "config",
+                        cdnKey.Substring(0, 2), cdnKey.Substring(2, 2), cdnKey);
+
+                    if (!File.Exists(buildCfgPath))
+                        throw new FileNotFoundException($"Build config not found: {buildCfgPath}");
+                    if (!File.Exists(cdnCfgPath))
+                        throw new FileNotFoundException($"CDN config not found: {cdnCfgPath}");
+
+                    // Store version name for later
+                    if (headerMap.TryGetValue("Version", out int versionIdx))
+                        VersionName = values[versionIdx];
+
+                    return (buildCfgPath, cdnCfgPath);
+                }
+            }
+
+            throw new InvalidDataException($"Product '{product}' not found in .build.info");
+        }
+
+        private string ExtractVersionName(BuildInstance build)
+        {
+            // If already set by DiscoverConfigFiles, use that
+            if (!string.IsNullOrEmpty(VersionName))
+                return VersionName;
+
+            // Try to extract from BuildConfig
+            if (build.BuildConfig?.Values != null &&
+                build.BuildConfig.Values.TryGetValue("build-name", out var buildName) &&
+                buildName != null &&
+                buildName.Length > 0)
+            {
+                return buildName[0];
+            }
+
+            return "Unknown";
+        }
+
+        /// <summary>
+        /// Checks if a file exists by FileDataID.
+        /// </summary>
+        /// <param name="fileDataID">The file data ID.</param>
+        /// <returns>True if the file exists, false otherwise.</returns>
+        public bool FileExists(uint fileDataID)
+        {
+            if (_useTACTSharp)
+                return Build?.Root?.FileExists(fileDataID) ?? false;
+            else
+                return CascHandler?.FileExists((int)fileDataID) ?? false;
+        }
+
+        /// <summary>
+        /// Opens a file by FileDataID and returns a stream.
+        /// </summary>
+        /// <param name="fileDataID">The file data ID.</param>
+        /// <returns>A stream containing the file data.</returns>
+        public Stream OpenFile(uint fileDataID)
+        {
+            if (_useTACTSharp)
+            {
+                if (Build == null)
+                    throw new InvalidOperationException("Build not initialized");
+
+                byte[] fileData = Build.OpenFileByFDID(fileDataID);
+                return new MemoryStream(fileData);
+            }
+            else
+            {
+                if (CascHandler == null)
+                    throw new InvalidOperationException("CascHandler not initialized");
+
+                return CascHandler.OpenFile((int)fileDataID);
+            }
         }
 
         /// <summary>

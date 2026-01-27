@@ -14,6 +14,7 @@
   <ItemGroup>
     <ProjectReference Include="..\CascLib\CascLib\CascLib.csproj" />
     <ProjectReference Include="..\SereniaBLPLib\SereniaBLPLib\SereniaBLPLib.csproj" />
+    <ProjectReference Include="..\TACTSharp\TACTSharp\TACTSharp.csproj" />
     <ProjectReference Include="..\WoWHeightGenLib\WoWHeightGenLib.csproj" />
   </ItemGroup>
 
