@@ -1,6 +1,7 @@
 using Microsoft.Win32;
+using WoWHeightGenLib.Models;
 
-namespace WoWHeightGen
+namespace WoWHeightGenLib.Configuration
 {
     /// <summary>
     /// Detects installed World of Warcraft installations via Windows Registry.

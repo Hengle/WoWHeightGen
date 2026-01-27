@@ -1,4 +1,6 @@
-namespace WoWHeightGen
+using WoWHeightGenLib.Configuration;
+
+namespace WoWHeightGenLib.Models
 {
     /// <summary>
     /// Represents a detected WoW installation with its path and variant information.

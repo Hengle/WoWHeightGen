@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using System.IO;
 
-namespace WoWHeightGen
+namespace WoWHeightGenLib.Models
 {
     public class Wdt
     {

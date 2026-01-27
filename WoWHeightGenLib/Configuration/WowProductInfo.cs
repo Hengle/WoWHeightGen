@@ -1,4 +1,4 @@
-namespace WoWHeightGen
+namespace WoWHeightGenLib.Configuration
 {
     /// <summary>
     /// Represents a World of Warcraft variant configuration including registry information
