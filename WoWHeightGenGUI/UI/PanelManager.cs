@@ -20,14 +20,10 @@ public class PanelManager : IDisposable
     {
         _menuBar = new MainMenuBar(_app, this);
 
-        // Create panels
+        // Create main panels for the UI layout
         RegisterPanel(new MapBrowserPanel(_app, this));
-        RegisterPanel(new FileExplorerPanel(_app));
-        RegisterPanel(new TextureViewerPanel(_app));
-        RegisterPanel(new HeightMapViewerPanel(_app));
-        RegisterPanel(new AreaMapViewerPanel(_app));
-        RegisterPanel(new TextureInfoPanel(_app));
-        RegisterPanel(new RecentFilesPanel(_app));
+        RegisterPanel(new MapViewportPanel(_app, this));
+        RegisterPanel(new LayersPropertiesPanel(_app, this));
     }
 
     public void RegisterPanel(IPanel panel)
@@ -64,7 +60,7 @@ public class PanelManager : IDisposable
         {
             if (panel.IsVisible)
             {
-                // Set initial positions for key panels on first use
+                // Set initial positions/docking for key panels on first use
                 if (_firstFrame)
                 {
                     SetupPanelLayout(panel, viewport);
@@ -111,20 +107,36 @@ public class PanelManager : IDisposable
     {
         var workSize = viewport.WorkSize;
         var workPos = viewport.WorkPos;
-        var leftWidth = workSize.X * 0.33f;
-        var rightWidth = workSize.X * 0.67f;
-        var rightX = workPos.X + leftWidth;
+
+        // 3-panel layout: Left (15%) | Center (70%) | Right (15%)
+        var leftWidth = workSize.X * 0.15f;
+        var rightWidth = workSize.X * 0.15f;
+        var centerWidth = workSize.X * 0.70f;
+        var centerX = workPos.X + leftWidth;
+        var rightX = centerX + centerWidth;
 
         // Set initial positions based on panel type
         if (panel.Name == "Map Browser")
         {
             ImGui.SetNextWindowPos(workPos, ImGuiCond.FirstUseEver);
             ImGui.SetNextWindowSize(new System.Numerics.Vector2(leftWidth, workSize.Y - 20), ImGuiCond.FirstUseEver);
+            // Tell window to dock to the main dockspace
+            var dockspaceId = ImGui.GetID("MainDockSpace");
+            ImGui.SetNextWindowDockID(dockspaceId, ImGuiCond.FirstUseEver);
         }
-        else if (panel.Name == "Height Map Viewer")
+        else if (panel.Name == "Map Viewport")
+        {
+            ImGui.SetNextWindowPos(new System.Numerics.Vector2(centerX, workPos.Y), ImGuiCond.FirstUseEver);
+            ImGui.SetNextWindowSize(new System.Numerics.Vector2(centerWidth, workSize.Y - 20), ImGuiCond.FirstUseEver);
+            var dockspaceId = ImGui.GetID("MainDockSpace");
+            ImGui.SetNextWindowDockID(dockspaceId, ImGuiCond.FirstUseEver);
+        }
+        else if (panel.Name == "Layers & Properties")
         {
             ImGui.SetNextWindowPos(new System.Numerics.Vector2(rightX, workPos.Y), ImGuiCond.FirstUseEver);
             ImGui.SetNextWindowSize(new System.Numerics.Vector2(rightWidth, workSize.Y - 20), ImGuiCond.FirstUseEver);
+            var dockspaceId = ImGui.GetID("MainDockSpace");
+            ImGui.SetNextWindowDockID(dockspaceId, ImGuiCond.FirstUseEver);
         }
     }
 

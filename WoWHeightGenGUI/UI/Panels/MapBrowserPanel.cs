@@ -22,6 +22,11 @@ public class MapBrowserPanel : IPanel, IConnectionAwarePanel
     private string? _errorMessage;
     private int _selectedIndex = -1;
 
+    // Sorting state
+    private int _sortColumnIndex = 1;  // Default to ID column
+    private bool _sortAscending = true;
+    private bool _needsSort = true;
+
     private static readonly string[] TypeFilters = { "All", "World", "Dungeon", "Raid", "Battleground", "Arena", "Scenario" };
     private static readonly int[] TypeFilterValues = { -1, 0, 1, 2, 3, 4, 5 };
 
@@ -176,6 +181,29 @@ public class MapBrowserPanel : IPanel, IConnectionAwarePanel
         }).ToList();
 
         _selectedIndex = -1;
+        _needsSort = true;
+    }
+
+    private void ApplySorting()
+    {
+        if (_filteredMaps == null || !_needsSort)
+            return;
+
+        _filteredMaps = _sortColumnIndex switch
+        {
+            0 => _sortAscending
+                ? _filteredMaps.OrderBy(m => m.Name).ToList()
+                : _filteredMaps.OrderByDescending(m => m.Name).ToList(),
+            1 => _sortAscending
+                ? _filteredMaps.OrderBy(m => m.Id).ToList()
+                : _filteredMaps.OrderByDescending(m => m.Id).ToList(),
+            2 => _sortAscending
+                ? _filteredMaps.OrderBy(m => m.InstanceType).ThenBy(m => m.Name).ToList()
+                : _filteredMaps.OrderByDescending(m => m.InstanceType).ThenBy(m => m.Name).ToList(),
+            _ => _filteredMaps
+        };
+
+        _needsSort = false;
     }
 
     private void RenderMapList()
@@ -188,14 +216,37 @@ public class MapBrowserPanel : IPanel, IConnectionAwarePanel
 
         var availableHeight = ImGui.GetContentRegionAvail().Y - 35; // Leave room for button
 
-        // Table with columns
-        if (ImGui.BeginTable("MapsTable", 3, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollY | ImGuiTableFlags.Resizable, new Vector2(0, availableHeight)))
+        // Table with columns and sorting
+        var tableFlags = ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollY
+            | ImGuiTableFlags.Resizable | ImGuiTableFlags.Sortable | ImGuiTableFlags.SortTristate;
+
+        if (ImGui.BeginTable("MapsTable", 3, tableFlags, new Vector2(0, availableHeight)))
         {
             ImGui.TableSetupColumn("Name", ImGuiTableColumnFlags.WidthStretch);
-            ImGui.TableSetupColumn("ID", ImGuiTableColumnFlags.WidthFixed, 60);
+            ImGui.TableSetupColumn("ID", ImGuiTableColumnFlags.WidthFixed | ImGuiTableColumnFlags.DefaultSort, 60);
             ImGui.TableSetupColumn("Type", ImGuiTableColumnFlags.WidthFixed, 100);
             ImGui.TableSetupScrollFreeze(0, 1);
             ImGui.TableHeadersRow();
+
+            // Handle sorting
+            var sortSpecs = ImGui.TableGetSortSpecs();
+            if (sortSpecs.SpecsDirty)
+            {
+                if (sortSpecs.SpecsCount > 0)
+                {
+                    unsafe
+                    {
+                        var spec = sortSpecs.Specs;
+                        _sortColumnIndex = spec.ColumnIndex;
+                        _sortAscending = spec.SortDirection == ImGuiSortDirection.Ascending;
+                        _needsSort = true;
+                    }
+                }
+                sortSpecs.SpecsDirty = false;
+            }
+
+            // Apply sorting if needed
+            ApplySorting();
 
             for (int i = 0; i < _filteredMaps.Count; i++)
             {
@@ -263,12 +314,12 @@ public class MapBrowserPanel : IPanel, IConnectionAwarePanel
 
         var map = _filteredMaps[_selectedIndex];
 
-        // Load in height map viewer
-        var heightViewer = FindPanel<HeightMapViewerPanel>();
-        if (heightViewer != null)
+        // Load in the new unified viewport
+        var viewport = FindPanel<MapViewportPanel>();
+        if (viewport != null)
         {
-            heightViewer.IsVisible = true;
-            heightViewer.LoadWdt(map.WdtFileDataId);
+            viewport.IsVisible = true;
+            viewport.LoadMap(map);
         }
 
         // Add to recent files

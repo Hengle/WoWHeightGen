@@ -5,7 +5,11 @@ using WoWHeightGenLib.Models;
 
 namespace WoWHeightGenGUI.UI.Dialogs;
 
-public class InitialSetupDialog
+/// <summary>
+/// Dialog for switching between WoW installations.
+/// Similar to InitialSetupDialog but as a modal that can be opened from the menu.
+/// </summary>
+public class InstallSwitchDialog
 {
     private List<DetectedWowInstallation>? _installations;
     private Dictionary<int, string>? _versionCache;
@@ -14,9 +18,10 @@ public class InitialSetupDialog
     private string _manualPath = "";
     private int _manualProductIndex;
     private string? _errorMessage;
-    private bool _isConnecting;
+    private bool _isOpen;
 
-    public bool IsComplete { get; private set; }
+    public bool IsOpen => _isOpen;
+    public bool HasSelection { get; private set; }
     public string? SelectedPath { get; private set; }
     public string? SelectedProduct { get; private set; }
 
@@ -38,42 +43,72 @@ public class InitialSetupDialog
         "wow_beta"
     };
 
+    /// <summary>
+    /// Open the dialog
+    /// </summary>
+    public void Open()
+    {
+        _isOpen = true;
+        HasSelection = false;
+        SelectedPath = null;
+        SelectedProduct = null;
+        _errorMessage = null;
+        _useManual = false;
+
+        // Refresh installations
+        _installations = WowInstallationDetector.DetectInstallations();
+        _versionCache = new Dictionary<int, string>();
+
+        for (int i = 0; i < _installations.Count; i++)
+        {
+            var version = GetVersionFromBuildInfo(_installations[i].InstallPath, _installations[i].ProductInfo.Product);
+            _versionCache[i] = version;
+        }
+
+        if (_installations.Count > 0)
+        {
+            _selectedIndex = 0;
+        }
+        else
+        {
+            _selectedIndex = -1;
+        }
+    }
+
+    /// <summary>
+    /// Close the dialog
+    /// </summary>
+    public void Close()
+    {
+        _isOpen = false;
+    }
+
+    /// <summary>
+    /// Render the dialog (call every frame while open)
+    /// </summary>
     public void Render()
     {
-        // Detect installations on first render
-        if (_installations == null)
+        if (!_isOpen) return;
+
+        // Open the modal popup if not already open
+        if (!ImGui.IsPopupOpen("Switch WoW Installation"))
         {
-            _installations = WowInstallationDetector.DetectInstallations();
-            _versionCache = new Dictionary<int, string>();
-
-            // Pre-load versions for all installations
-            for (int i = 0; i < _installations.Count; i++)
-            {
-                var version = GetVersionFromBuildInfo(_installations[i].InstallPath, _installations[i].ProductInfo.Product);
-                _versionCache[i] = version;
-            }
-
-            if (_installations.Count > 0)
-            {
-                _selectedIndex = 0;
-            }
+            ImGui.OpenPopup("Switch WoW Installation");
         }
 
         var viewport = ImGui.GetMainViewport();
-        var windowSize = new Vector2(550, 400);
+        var windowSize = new Vector2(550, 420);
         var windowPos = viewport.WorkPos + (viewport.WorkSize - windowSize) / 2;
 
-        ImGui.SetNextWindowPos(windowPos, ImGuiCond.Always);
-        ImGui.SetNextWindowSize(windowSize, ImGuiCond.Always);
+        ImGui.SetNextWindowPos(windowPos, ImGuiCond.Appearing);
+        ImGui.SetNextWindowSize(windowSize, ImGuiCond.Appearing);
 
-        var windowFlags = ImGuiWindowFlags.NoResize
-            | ImGuiWindowFlags.NoMove
-            | ImGuiWindowFlags.NoCollapse
-            | ImGuiWindowFlags.NoDocking;
+        var windowFlags = ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoDocking;
 
-        if (ImGui.Begin("Welcome to WoW Height Map Generator", windowFlags))
+        bool open = true;
+        if (ImGui.BeginPopupModal("Switch WoW Installation", ref open, windowFlags))
         {
-            ImGui.TextWrapped("Select a World of Warcraft installation to get started.");
+            ImGui.TextWrapped("Select a World of Warcraft installation.");
             ImGui.Spacing();
             ImGui.Separator();
             ImGui.Spacing();
@@ -82,7 +117,7 @@ public class InitialSetupDialog
             ImGui.Text("Detected Installations:");
             ImGui.Spacing();
 
-            if (_installations.Count == 0)
+            if (_installations == null || _installations.Count == 0)
             {
                 ImGui.TextColored(new Vector4(1, 0.7f, 0.3f, 1), "No installations detected automatically.");
             }
@@ -164,7 +199,7 @@ public class InitialSetupDialog
                 ImGui.TextColored(new Vector4(1, 0.4f, 0.4f, 1), _errorMessage);
             }
 
-            // Connect button
+            // Buttons
             ImGui.Spacing();
             ImGui.Separator();
             ImGui.Spacing();
@@ -173,36 +208,46 @@ public class InitialSetupDialog
                 ? !string.IsNullOrWhiteSpace(_manualPath)
                 : _selectedIndex >= 0;
 
-            ImGui.BeginDisabled(!canConnect || _isConnecting);
+            var buttonWidth = 100.0f;
+            var totalWidth = buttonWidth * 2 + 10;
+            var startX = (ImGui.GetContentRegionAvail().X - totalWidth) / 2;
 
-            var buttonSize = new Vector2(120, 30);
-            var buttonPos = (ImGui.GetContentRegionAvail().X - buttonSize.X) / 2;
-            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + buttonPos);
+            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + startX);
 
-            if (ImGui.Button(_isConnecting ? "Connecting..." : "Connect", buttonSize))
+            ImGui.BeginDisabled(!canConnect);
+            if (ImGui.Button("Connect", new Vector2(buttonWidth, 28)))
             {
                 TryConnect();
             }
-
             ImGui.EndDisabled();
+
+            ImGui.SameLine();
+
+            if (ImGui.Button("Cancel", new Vector2(buttonWidth, 28)))
+            {
+                Close();
+            }
+
+            ImGui.EndPopup();
         }
-        ImGui.End();
+
+        if (!open)
+        {
+            Close();
+        }
     }
 
     private void TryConnect()
     {
-        _isConnecting = true;
         _errorMessage = null;
 
         try
         {
             if (_useManual)
             {
-                // Validate manual path
                 if (!Directory.Exists(_manualPath))
                 {
                     _errorMessage = "Directory does not exist.";
-                    _isConnecting = false;
                     return;
                 }
 
@@ -210,7 +255,6 @@ public class InitialSetupDialog
                 if (!File.Exists(buildInfoPath))
                 {
                     _errorMessage = "Not a valid WoW installation (missing .build.info).";
-                    _isConnecting = false;
                     return;
                 }
 
@@ -223,22 +267,21 @@ public class InitialSetupDialog
                 SelectedPath = install.InstallPath;
                 SelectedProduct = install.ProductInfo.Product;
             }
+            else
+            {
+                _errorMessage = "Please select an installation.";
+                return;
+            }
 
-            IsComplete = true;
+            HasSelection = true;
+            Close();
         }
         catch (Exception ex)
         {
             _errorMessage = $"Error: {ex.Message}";
         }
-        finally
-        {
-            _isConnecting = false;
-        }
     }
 
-    /// <summary>
-    /// Parse .build.info file to extract version information
-    /// </summary>
     private static string GetVersionFromBuildInfo(string installPath, string product)
     {
         try
@@ -251,7 +294,6 @@ public class InitialSetupDialog
             if (lines.Length < 2)
                 return "Unknown";
 
-            // Parse header line to find column indices
             var headers = lines[0].Split('|');
             int versionIndex = -1;
             int productIndex = -1;
@@ -268,12 +310,10 @@ public class InitialSetupDialog
             if (versionIndex < 0)
                 return "Unknown";
 
-            // Find the matching product row
             for (int lineIdx = 1; lineIdx < lines.Length; lineIdx++)
             {
                 var values = lines[lineIdx].Split('|');
 
-                // Check if this row matches our product
                 if (productIndex >= 0 && productIndex < values.Length)
                 {
                     var rowProduct = values[productIndex].Trim();
@@ -289,7 +329,6 @@ public class InitialSetupDialog
                 }
             }
 
-            // If no matching product found, try the first data row
             if (lines.Length > 1)
             {
                 var values = lines[1].Split('|');

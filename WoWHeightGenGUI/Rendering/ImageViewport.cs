@@ -24,16 +24,21 @@ public class ImageViewport
 
     public void HandleMouseWheel(float delta, Vector2 mousePos)
     {
-        // Calculate zoom-to-point
+        // mousePos is relative to viewport top-left
         var oldZoom = Zoom;
         Zoom *= 1.0f + delta * ZoomSpeed;
         Zoom = Math.Clamp(Zoom, MinZoom, MaxZoom);
 
         // Adjust pan to zoom towards mouse position
+        // mousePos is relative to viewport top-left, convert to relative to center
         var zoomRatio = Zoom / oldZoom;
-        var center = ViewportSize / 2 + Pan;
-        var toMouse = mousePos - center;
-        Pan -= toMouse * (zoomRatio - 1);
+        var mouseRelativeToCenter = mousePos - ViewportSize / 2;
+
+        // The mouse points to a location in image space: (mouseRelativeToCenter - Pan) / oldZoom
+        // After zoom, we want the same image point to stay under the mouse
+        // newPan should satisfy: (mouseRelativeToCenter - newPan) / newZoom = (mouseRelativeToCenter - oldPan) / oldZoom
+        // Solving: newPan = mouseRelativeToCenter - (mouseRelativeToCenter - oldPan) * (newZoom / oldZoom)
+        Pan = mouseRelativeToCenter - (mouseRelativeToCenter - Pan) * zoomRatio;
     }
 
     public void FitToViewport(Vector2 imageSize)

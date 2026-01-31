@@ -260,12 +260,17 @@ public class Application : IDisposable
 
     public void Dispose()
     {
-        _panelManager?.Dispose();
-        _imguiController?.Dispose();
+        // Dispose GL resources BEFORE disposing GL context/window
+        _panelManager?.Dispose();      // Contains compositor, textures (GL resources)
+        _imguiController?.Dispose();   // ImGui GL resources
+
+        // Now safe to dispose GL and window
+        _gl?.Dispose();
+        _window?.Dispose();
+
+        // Non-GL resources can be disposed any time
         _db2Service?.Dispose();
         _context?.Dispose();
         _input?.Dispose();
-        _gl?.Dispose();
-        _window?.Dispose();
     }
 }
