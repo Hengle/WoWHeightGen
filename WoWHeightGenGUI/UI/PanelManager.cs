@@ -1,5 +1,6 @@
 using ImGuiNET;
 using WoWHeightGenGUI.App;
+using WoWHeightGenGUI.ImGuiInternal;
 using WoWHeightGenGUI.UI.Panels;
 
 namespace WoWHeightGenGUI.UI;
@@ -10,6 +11,7 @@ public class PanelManager : IDisposable
     private readonly List<IPanel> _panels = new();
     private MainMenuBar _menuBar = null!;
     private bool _firstFrame = true;
+    private bool _dockLayoutInitialized = false;
 
     public PanelManager(Application app)
     {
@@ -52,7 +54,8 @@ public class PanelManager : IDisposable
 
     public void Render()
     {
-        var viewport = ImGui.GetMainViewport();
+        var viewport = ImGuiNET.ImGui.GetMainViewport();
+
         RenderDockSpace(viewport);
         _menuBar.Render();
 
@@ -60,11 +63,6 @@ public class PanelManager : IDisposable
         {
             if (panel.IsVisible)
             {
-                // Set initial positions/docking for key panels on first use
-                if (_firstFrame)
-                {
-                    SetupPanelLayout(panel, viewport);
-                }
                 panel.Render();
             }
         }
@@ -77,9 +75,9 @@ public class PanelManager : IDisposable
 
     private void RenderDockSpace(ImGuiViewportPtr viewport)
     {
-        ImGui.SetNextWindowPos(viewport.WorkPos);
-        ImGui.SetNextWindowSize(viewport.WorkSize);
-        ImGui.SetNextWindowViewport(viewport.ID);
+        ImGuiNET.ImGui.SetNextWindowPos(viewport.WorkPos);
+        ImGuiNET.ImGui.SetNextWindowSize(viewport.WorkSize);
+        ImGuiNET.ImGui.SetNextWindowViewport(viewport.ID);
 
         var windowFlags = ImGuiWindowFlags.NoDocking
             | ImGuiWindowFlags.NoTitleBar
@@ -90,54 +88,71 @@ public class PanelManager : IDisposable
             | ImGuiWindowFlags.NoNavFocus
             | ImGuiWindowFlags.NoBackground;
 
-        ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 0.0f);
-        ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 0.0f);
-        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, System.Numerics.Vector2.Zero);
+        ImGuiNET.ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 0.0f);
+        ImGuiNET.ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 0.0f);
+        ImGuiNET.ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, System.Numerics.Vector2.Zero);
 
-        ImGui.Begin("DockSpaceWindow", windowFlags);
-        ImGui.PopStyleVar(3);
+        ImGuiNET.ImGui.Begin("DockSpaceWindow", windowFlags);
+        ImGuiNET.ImGui.PopStyleVar(3);
 
-        var dockspaceId = ImGui.GetID("MainDockSpace");
-        ImGui.DockSpace(dockspaceId, System.Numerics.Vector2.Zero, ImGuiDockNodeFlags.PassthruCentralNode);
+        var dockspaceId = ImGuiNET.ImGui.GetID("MainDockSpace");
 
-        ImGui.End();
+        // Set up dock layout on first frame, AFTER getting the dockspace ID but BEFORE calling DockSpace
+        if (_firstFrame && !_dockLayoutInitialized)
+        {
+            SetupInitialDockLayout(dockspaceId, viewport);
+            _dockLayoutInitialized = true;
+        }
+
+        ImGuiNET.ImGui.DockSpace(dockspaceId, System.Numerics.Vector2.Zero, ImGuiDockNodeFlags.PassthruCentralNode);
+
+        ImGuiNET.ImGui.End();
     }
 
-    private void SetupPanelLayout(IPanel panel, ImGuiViewportPtr viewport)
+    /// <summary>
+    /// Set up the initial dock layout using DockBuilder API.
+    /// Only runs on first launch (when no imgui.ini exists).
+    /// </summary>
+    private void SetupInitialDockLayout(uint dockspaceId, ImGuiViewportPtr viewport)
     {
-        var workSize = viewport.WorkSize;
-        var workPos = viewport.WorkPos;
+        // Check if we have an existing layout saved
+        var imguiIniPath = _app.Settings.GetImGuiIniPath();
+        if (File.Exists(imguiIniPath))
+        {
+            // Let ImGui restore the saved layout
+            return;
+        }
 
-        // 3-panel layout: Left (15%) | Center (70%) | Right (15%)
-        var leftWidth = workSize.X * 0.15f;
-        var rightWidth = workSize.X * 0.15f;
-        var centerWidth = workSize.X * 0.70f;
-        var centerX = workPos.X + leftWidth;
-        var rightX = centerX + centerWidth;
+        // Clear any existing layout for this dockspace
+        DockBuilder.RemoveNode(dockspaceId);
 
-        // Set initial positions based on panel type
-        if (panel.Name == "Map Browser")
-        {
-            ImGui.SetNextWindowPos(workPos, ImGuiCond.FirstUseEver);
-            ImGui.SetNextWindowSize(new System.Numerics.Vector2(leftWidth, workSize.Y - 20), ImGuiCond.FirstUseEver);
-            // Tell window to dock to the main dockspace
-            var dockspaceId = ImGui.GetID("MainDockSpace");
-            ImGui.SetNextWindowDockID(dockspaceId, ImGuiCond.FirstUseEver);
-        }
-        else if (panel.Name == "Map Viewport")
-        {
-            ImGui.SetNextWindowPos(new System.Numerics.Vector2(centerX, workPos.Y), ImGuiCond.FirstUseEver);
-            ImGui.SetNextWindowSize(new System.Numerics.Vector2(centerWidth, workSize.Y - 20), ImGuiCond.FirstUseEver);
-            var dockspaceId = ImGui.GetID("MainDockSpace");
-            ImGui.SetNextWindowDockID(dockspaceId, ImGuiCond.FirstUseEver);
-        }
-        else if (panel.Name == "Layers & Properties")
-        {
-            ImGui.SetNextWindowPos(new System.Numerics.Vector2(rightX, workPos.Y), ImGuiCond.FirstUseEver);
-            ImGui.SetNextWindowSize(new System.Numerics.Vector2(rightWidth, workSize.Y - 20), ImGuiCond.FirstUseEver);
-            var dockspaceId = ImGui.GetID("MainDockSpace");
-            ImGui.SetNextWindowDockID(dockspaceId, ImGuiCond.FirstUseEver);
-        }
+        // Create the root dockspace node
+        DockBuilder.AddNode(dockspaceId, DockNodeFlags.DockSpace);
+        DockBuilder.SetNodeSize(dockspaceId, viewport.WorkSize);
+
+        // Split layout: Left (30% for Map Browser) | Remaining (70%)
+        DockBuilder.SplitNode(
+            dockspaceId,
+            Direction.Left,
+            0.30f,
+            out uint leftId,
+            out uint remainingId);
+
+        // Split remaining: Center | Right (22.5% of original = ~32% of remaining 70%)
+        DockBuilder.SplitNode(
+            remainingId,
+            Direction.Right,
+            0.32f,  // 22.5% of original / 70% remaining ≈ 0.32
+            out uint rightId,
+            out uint centerId);
+
+        // Dock windows to their respective nodes
+        DockBuilder.DockWindow("Map Browser", leftId);
+        DockBuilder.DockWindow("Map Viewport", centerId);
+        DockBuilder.DockWindow("Layers & Properties", rightId);
+
+        // Finalize the layout
+        DockBuilder.Finish(dockspaceId);
     }
 
     public void Dispose()

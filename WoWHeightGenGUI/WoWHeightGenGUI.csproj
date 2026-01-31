@@ -28,4 +28,12 @@
     <EmbeddedResource Include="Rendering\Shaders\*.frag" />
   </ItemGroup>
 
+  <!-- Custom cimgui.dll with DockBuilder internal API (from DearImguiSharp) -->
+  <ItemGroup>
+    <Content Include="runtimes\win-x64\native\cimgui.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>cimgui.dll</Link>
+    </Content>
+  </ItemGroup>
+
 </Project>
