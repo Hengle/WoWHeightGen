@@ -29,6 +29,11 @@ public record TileUpdate
     public byte[] PixelData { get; init; } = Array.Empty<byte>();
 
     /// <summary>
+    /// Raw height values for 16-bit export (only populated for Height layer)
+    /// </summary>
+    public float[]? RawHeights { get; init; }
+
+    /// <summary>
     /// Width of the tile in pixels
     /// </summary>
     public int Width { get; init; }

@@ -704,6 +704,7 @@ public class MapLoadingService : IDisposable
                 TileY = y,
                 Layer = LayerType.Height,
                 PixelData = pixelData,
+                RawHeights = heights,
                 Width = HeightTileSize,
                 Height = HeightTileSize
             };

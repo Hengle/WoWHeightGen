@@ -50,14 +50,15 @@ public class ExportDialog
     // Cached images assembled from quads (built on main thread, used by background export)
     private Image<Rgba32>? _cachedMinimapImage;
     private Image<Rgba32>? _cachedHeightImage;
+    private Image<L16>? _cachedHeightImage16;
     private Image<Rgba32>? _cachedAreaImage;
 
     // Cancellation support for background export
     private CancellationTokenSource? _exportCts;
 
     private static readonly string[] ExportTypeOptions = { "Composed Image", "Minimap Only", "Height Only", "Area Only", "All Layers" };
-    private static readonly string[] FormatOptions = { "PNG", "JPEG", "BMP", "WebP" };
-    private static readonly string[] FormatExtensions = { ".png", ".jpg", ".bmp", ".webp" };
+    private static readonly string[] FormatOptions = { "PNG", "PNG (16-bit)", "JPEG", "BMP", "WebP" };
+    private static readonly string[] FormatExtensions = { ".png", ".png", ".jpg", ".bmp", ".webp" };
 
     public bool IsOpen => _isOpen;
 
@@ -185,13 +186,24 @@ public class ExportDialog
         }
 
         // JPEG quality slider (only visible for JPEG format)
-        if (_formatIndex == 1)
+        if (_formatIndex == 2) // JPEG is now index 2 after adding PNG (16-bit)
         {
             ImGui.SameLine();
             ImGui.Text("Quality:");
             ImGui.SameLine();
             ImGui.SetNextItemWidth(100);
             ImGui.SliderInt("##JpegQuality", ref _jpegQuality, 1, 100);
+        }
+
+        // Show note for 16-bit PNG
+        if (_formatIndex == 1)
+        {
+            ImGui.TextDisabled("16-bit grayscale for heightmaps (256x more precision)");
+            // Show warning if not exporting height data
+            if (_exportTypeIndex != 2 && _exportTypeIndex != 4) // Not Height Only or All Layers
+            {
+                ImGui.TextColored(new Vector4(1, 0.8f, 0.3f, 1), "Note: 16-bit only applies to height layer");
+            }
         }
 
         ImGui.Spacing();
@@ -483,6 +495,8 @@ public class ExportDialog
                 _cachedMinimapImage = null;
                 _cachedHeightImage?.Dispose();
                 _cachedHeightImage = null;
+                _cachedHeightImage16?.Dispose();
+                _cachedHeightImage16 = null;
                 _cachedAreaImage?.Dispose();
                 _cachedAreaImage = null;
             }
@@ -509,8 +523,15 @@ public class ExportDialog
 
         // Create output images
         _cachedHeightImage = new Image<Rgba32>(heightAreaSize, heightAreaSize);
+        _cachedHeightImage16 = new Image<L16>(heightAreaSize, heightAreaSize);
         _cachedAreaImage = new Image<Rgba32>(heightAreaSize, heightAreaSize);
         _cachedMinimapImage = new Image<Rgba32>(minimapSize, minimapSize);
+
+        // Get height stats for 16-bit normalization
+        float minHeight = _viewState.HeightStats?.MinHeight ?? 0;
+        float maxHeight = _viewState.HeightStats?.MaxHeight ?? 1;
+        float heightRange = maxHeight - minHeight;
+        if (heightRange <= 0) heightRange = 1;
 
         // Composite tiles from quads
         for (int quadY = 0; quadY < QuadCoord.GridSize; quadY++)
@@ -522,12 +543,30 @@ public class ExportDialog
 
                 if (quadData == null) continue;
 
-                // Draw height tile
+                // Draw height tile (8-bit)
                 if (quadData.HeightPixels != null)
                 {
                     using var tileImage = CreateImageFromPixels(quadData.HeightPixels, heightAreaTileSize, heightAreaTileSize);
                     var destPoint = new Point(quadX * heightAreaTileSize, quadY * heightAreaTileSize);
                     _cachedHeightImage.Mutate(ctx => ctx.DrawImage(tileImage, destPoint, 1f));
+                }
+
+                // Build 16-bit height tile from raw heights
+                if (quadData.HeightValues != null)
+                {
+                    for (int y = 0; y < heightAreaTileSize; y++)
+                    {
+                        for (int x = 0; x < heightAreaTileSize; x++)
+                        {
+                            float height = quadData.HeightValues[y * heightAreaTileSize + x];
+                            float normalized = Math.Clamp((height - minHeight) / heightRange, 0f, 1f);
+                            ushort val16 = (ushort)(normalized * 65535f);
+
+                            int px = quadX * heightAreaTileSize + x;
+                            int py = quadY * heightAreaTileSize + y;
+                            _cachedHeightImage16[px, py] = new L16(val16);
+                        }
+                    }
                 }
 
                 // Draw area tile
@@ -614,41 +653,61 @@ public class ExportDialog
 
         _exportProgress = 0.1f;
 
-        Image<Rgba32>? image = null;
-        switch (exportType)
-        {
-            case 0: // Composed
-                image = RenderComposedImageFromCache(viewState, width, height, cropToData);
-                break;
-            case 1: // Minimap
-                image = RenderLayerImageFromCache(viewState, loadingService, LayerType.Minimap, width, height, cropToData);
-                break;
-            case 2: // Height
-                image = RenderLayerImageFromCache(viewState, loadingService, LayerType.Height, width, height, cropToData);
-                break;
-            case 3: // Area
-                image = RenderLayerImageFromCache(viewState, loadingService, LayerType.Area, width, height, cropToData);
-                break;
-        }
-
-        _exportProgress = 0.6f;
-        Console.WriteLine($"[Export] Rendered image: {image?.Width}x{image?.Height}");
-
-        ct.ThrowIfCancellationRequested();
-
-        if (image == null)
-        {
-            throw new Exception("Failed to render image data.");
-        }
-
         // Save image
         var filePath = Path.Combine(outputFolder, fileName);
-        Console.WriteLine($"[Export] Saving to: {filePath}");
-        _exportProgress = 0.7f;
 
-        using (image)
+        // For height export with 16-bit format, use the 16-bit pipeline
+        if (formatIndex == 1 && exportType == 2) // PNG (16-bit) and Height Only
         {
-            SaveImage(image, filePath, formatIndex, jpegQuality);
+            Console.WriteLine("[Export] Using 16-bit export for height");
+            using var image16 = RenderHeight16BitFromCache(viewState, width, height, cropToData);
+            if (image16 == null)
+            {
+                throw new Exception("Failed to render 16-bit height image data.");
+            }
+            _exportProgress = 0.6f;
+            Console.WriteLine($"[Export] Rendered 16-bit image: {image16.Width}x{image16.Height}");
+            ct.ThrowIfCancellationRequested();
+            Console.WriteLine($"[Export] Saving to: {filePath}");
+            _exportProgress = 0.7f;
+            SaveImage16Bit(image16, filePath);
+        }
+        else
+        {
+            Image<Rgba32>? image = null;
+            switch (exportType)
+            {
+                case 0: // Composed
+                    image = RenderComposedImageFromCache(viewState, width, height, cropToData);
+                    break;
+                case 1: // Minimap
+                    image = RenderLayerImageFromCache(viewState, loadingService, LayerType.Minimap, width, height, cropToData);
+                    break;
+                case 2: // Height
+                    image = RenderLayerImageFromCache(viewState, loadingService, LayerType.Height, width, height, cropToData);
+                    break;
+                case 3: // Area
+                    image = RenderLayerImageFromCache(viewState, loadingService, LayerType.Area, width, height, cropToData);
+                    break;
+            }
+
+            _exportProgress = 0.6f;
+            Console.WriteLine($"[Export] Rendered image: {image?.Width}x{image?.Height}");
+
+            ct.ThrowIfCancellationRequested();
+
+            if (image == null)
+            {
+                throw new Exception("Failed to render image data.");
+            }
+
+            Console.WriteLine($"[Export] Saving to: {filePath}");
+            _exportProgress = 0.7f;
+
+            using (image)
+            {
+                SaveImage(image, filePath, formatIndex, jpegQuality);
+            }
         }
 
         Console.WriteLine("[Export] Save complete");
@@ -693,8 +752,19 @@ public class ExportDialog
         // Export height
         _exportProgress = 0.4f;
         var heightSize = CalculateLayerResolutionFor(viewState, loadingService, LayerType.Height, cropToData, scalePercent);
-        using (var heightImage = RenderLayerImageFromCache(viewState, loadingService, LayerType.Height, heightSize.width, heightSize.height, cropToData))
+
+        // Use 16-bit export for height when PNG (16-bit) is selected
+        if (formatIndex == 1)
         {
+            using var heightImage16 = RenderHeight16BitFromCache(viewState, heightSize.width, heightSize.height, cropToData);
+            if (heightImage16 != null)
+            {
+                SaveImage16Bit(heightImage16, Path.Combine(outputFolder, $"{baseName}_height{extension}"));
+            }
+        }
+        else
+        {
+            using var heightImage = RenderLayerImageFromCache(viewState, loadingService, LayerType.Height, heightSize.width, heightSize.height, cropToData);
             if (heightImage != null)
             {
                 SaveImage(heightImage, Path.Combine(outputFolder, $"{baseName}_height{extension}"), formatIndex, jpegQuality);
@@ -978,6 +1048,48 @@ public class ExportDialog
     }
 
     /// <summary>
+    /// Render 16-bit height image from cached data (background thread safe)
+    /// </summary>
+    private Image<L16>? RenderHeight16BitFromCache(MapViewState viewState, int width, int height, bool cropToData)
+    {
+        if (_cachedHeightImage16 == null) return null;
+
+        Console.WriteLine($"[Export] Processing 16-bit height layer: {_cachedHeightImage16.Width}x{_cachedHeightImage16.Height} -> {width}x{height}");
+
+        Image<L16> result;
+
+        // If cropping, extract just the region we need
+        if (cropToData && viewState.HasTileBounds)
+        {
+            int texTileSize = _cachedHeightImage16.Width / viewState.TileCount;
+            int srcX = viewState.MinTileX * texTileSize;
+            int srcY = viewState.MinTileY * texTileSize;
+            int srcW = (viewState.MaxTileX - viewState.MinTileX + 1) * texTileSize;
+            int srcH = (viewState.MaxTileY - viewState.MinTileY + 1) * texTileSize;
+
+            Console.WriteLine($"[Export] Cropping 16-bit to region: ({srcX},{srcY}) {srcW}x{srcH}");
+
+            // Clone only the cropped region
+            result = _cachedHeightImage16.Clone(ctx => ctx.Crop(new Rectangle(srcX, srcY, srcW, srcH)));
+        }
+        else
+        {
+            // Clone the full image
+            result = _cachedHeightImage16.Clone();
+        }
+
+        // Scale to output size if needed
+        if (result.Width != width || result.Height != height)
+        {
+            Console.WriteLine($"[Export] Resizing 16-bit from {result.Width}x{result.Height} to {width}x{height}");
+            result.Mutate(ctx => ctx.Resize(width, height));
+        }
+
+        Console.WriteLine("[Export] 16-bit layer processing complete");
+        return result;
+    }
+
+    /// <summary>
     /// Apply colormap to an image in-place, with optional height range remapping
     /// </summary>
     private void ApplyColormapToImage(Image<Rgba32> image, ColormapType colormapType,
@@ -1150,20 +1262,35 @@ public class ExportDialog
         switch (formatIndex)
         {
             case 0: // PNG
+            case 1: // PNG (16-bit) - falls through to regular PNG for non-height layers
                 image.SaveAsPng(filePath, new PngEncoder());
                 break;
-            case 1: // JPEG
+            case 2: // JPEG
                 image.SaveAsJpeg(filePath, new JpegEncoder { Quality = jpegQuality });
                 break;
-            case 2: // BMP
+            case 3: // BMP
                 image.SaveAsBmp(filePath, new BmpEncoder());
                 break;
-            case 3: // WebP
+            case 4: // WebP
                 image.SaveAsWebp(filePath, new WebpEncoder());
                 break;
             default:
                 image.SaveAsPng(filePath);
                 break;
         }
+    }
+
+    /// <summary>
+    /// Save 16-bit grayscale image to PNG file
+    /// </summary>
+    private static void SaveImage16Bit(Image<L16> image, string filePath)
+    {
+        var encoder = new PngEncoder
+        {
+            BitDepth = PngBitDepth.Bit16,
+            ColorType = PngColorType.Grayscale,
+            CompressionLevel = PngCompressionLevel.BestCompression
+        };
+        image.SaveAsPng(filePath, encoder);
     }
 }

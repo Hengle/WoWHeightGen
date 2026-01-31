@@ -70,7 +70,7 @@ public class QuadStreamingService
                 break;
 
             case LayerType.Height:
-                quadData.SetHeight(update.PixelData);
+                quadData.SetHeight(update.PixelData, update.RawHeights);
                 break;
 
             case LayerType.Area:

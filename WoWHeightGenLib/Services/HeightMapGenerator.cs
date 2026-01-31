@@ -1,4 +1,5 @@
 using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Formats.Png;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
 using WoWHeightGenLib.Models;
@@ -27,14 +28,14 @@ namespace WoWHeightGenLib.Services
         /// <param name="wdtFileID">The WDT file ID.</param>
         /// <param name="clampToAboveSea">Whether to clamp heights to above sea level.</param>
         /// <param name="clampToBelowSea">Whether to clamp heights to below sea level.</param>
-        public void Generate(int wdtFileID, bool clampToAboveSea = false, bool clampToBelowSea = false)
+        /// <param name="use16Bit">Whether to export as 16-bit grayscale PNG for higher precision.</param>
+        public void Generate(int wdtFileID, bool clampToAboveSea = false, bool clampToBelowSea = false, bool use16Bit = false)
         {
             if (!Directory.Exists(_context.Config.OutputPath))
                 Directory.CreateDirectory(_context.Config.OutputPath);
 
             if (!_context.FileExists((uint)wdtFileID)) return;
 
-            using var outputImage = new Image<Rgba32>(_context.Config.HeightMapResolution, _context.Config.HeightMapResolution);
             using var wdtStream = _context.OpenFile((uint)wdtFileID);
             var wdt = new Wdt(wdtStream);
             var adts = LoadAdtGrid(wdt, out float minAdt, out float maxAdt);
@@ -47,11 +48,27 @@ namespace WoWHeightGenLib.Services
 
             Console.WriteLine($"{wdtFileID} : Min Height {minAdt} Max Height {maxAdt}");
 
-            RenderHeightMap(outputImage, adts, minAdt, maxAdt, clampToAboveSea, clampToBelowSea);
-
             var fileName = $"{wdtFileID}_height_{_context.Product}_{_context.VersionName}.png";
             var filePath = Path.Combine(_context.Config.OutputPath, fileName);
-            outputImage.SaveAsPng(filePath);
+
+            if (use16Bit)
+            {
+                using var outputImage = new Image<L16>(_context.Config.HeightMapResolution, _context.Config.HeightMapResolution);
+                RenderHeightMap16Bit(outputImage, adts, minAdt, maxAdt, clampToAboveSea, clampToBelowSea);
+                var encoder = new PngEncoder
+                {
+                    BitDepth = PngBitDepth.Bit16,
+                    ColorType = PngColorType.Grayscale,
+                    CompressionLevel = PngCompressionLevel.BestCompression
+                };
+                outputImage.SaveAsPng(filePath, encoder);
+            }
+            else
+            {
+                using var outputImage = new Image<Rgba32>(_context.Config.HeightMapResolution, _context.Config.HeightMapResolution);
+                RenderHeightMap(outputImage, adts, minAdt, maxAdt, clampToAboveSea, clampToBelowSea);
+                outputImage.SaveAsPng(filePath);
+            }
         }
 
         private Adt?[,] LoadAdtGrid(Wdt wdt, out float minHeight, out float maxHeight)
@@ -130,6 +147,48 @@ namespace WoWHeightGenLib.Services
 
                     var img = Image.LoadPixelData<Rgb24>(pixelData, chunkRes, chunkRes);
                     outputImage.Mutate(o => o.DrawImage(img, new Point(chunkRes * x, chunkRes * y), 1f));
+                }
+            }
+        }
+
+        private void RenderHeightMap16Bit(
+            Image<L16> outputImage,
+            Adt?[,] adts,
+            float minHeight,
+            float maxHeight,
+            bool clampToAboveSea,
+            bool clampToBelowSea)
+        {
+            int chunkRes = _context.Config.HeightChunkResolution;
+            float range = maxHeight - minHeight;
+            if (range <= 0) range = 1;
+
+            for (int y = 0; y < _context.Config.MapSize; y++)
+            {
+                for (int x = 0; x < _context.Config.MapSize; x++)
+                {
+                    if (adts[x, y] == null)
+                        continue;
+
+                    for (int x1 = 0; x1 < chunkRes; x1++)
+                    {
+                        for (int y1 = 0; y1 < chunkRes; y1++)
+                        {
+                            float value = adts[x, y]!.heightmap[x1, y1];
+
+                            if (clampToAboveSea && value < 0)
+                                value = 0;
+                            if (clampToBelowSea && value > 0)
+                                value = 0;
+
+                            float normalized = (value - minHeight) / range;
+                            if (normalized < 0f) normalized = 0f;
+                            if (normalized > 1f) normalized = 1f;
+
+                            ushort val16 = (ushort)(normalized * 65535f);
+                            outputImage[chunkRes * x + x1, chunkRes * y + y1] = new L16(val16);
+                        }
+                    }
                 }
             }
         }

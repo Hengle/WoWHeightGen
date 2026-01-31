@@ -22,6 +22,11 @@ public class QuadData
     public byte[]? HeightPixels { get; private set; }
 
     /// <summary>
+    /// Raw height values for 16-bit export (128x128 floats)
+    /// </summary>
+    public float[]? HeightValues { get; private set; }
+
+    /// <summary>
     /// Area layer pixel data (RGBA, 128x128)
     /// </summary>
     public byte[]? AreaPixels { get; private set; }
@@ -97,9 +102,11 @@ public class QuadData
     /// Set height data directly (single tile, always 128x128)
     /// </summary>
     /// <param name="pixels">RGBA pixel data (128x128x4 bytes)</param>
-    public void SetHeight(byte[] pixels)
+    /// <param name="rawHeights">Optional raw height values for 16-bit export</param>
+    public void SetHeight(byte[] pixels, float[]? rawHeights = null)
     {
         HeightPixels = pixels;
+        HeightValues = rawHeights;
         HeightDirty = true;
     }
 
@@ -130,6 +137,7 @@ public class QuadData
     {
         MinimapPixels = null;
         HeightPixels = null;
+        HeightValues = null;
         AreaPixels = null;
         MinimapSize = 0;
         MinimapDirty = false;
