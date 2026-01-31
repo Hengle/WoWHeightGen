@@ -4,6 +4,8 @@ using WoWHeightGenGUI.Services;
 
 namespace WoWHeightGenGUI.Models;
 
+// Forward reference for HeightStats (defined in TileUpdate.cs)
+
 /// <summary>
 /// Represents the complete state of the map viewport including the current map,
 /// all layer states, selected layer, and camera transform.
@@ -34,6 +36,12 @@ public class MapViewState
         new(LayerType.Height),
         new(LayerType.Area)
     };
+
+    /// <summary>
+    /// Layer rendering order (indices into Layers array, bottom to top).
+    /// Default: [0, 1, 2] meaning Minimap -> Height -> Area
+    /// </summary>
+    public int[] LayerOrder { get; private set; } = { 0, 1, 2 };
 
     /// <summary>
     /// Index of the currently selected layer (for properties panel)
@@ -84,6 +92,11 @@ public class MapViewState
     /// Total size of the minimap in pixels (64 * minimap_tile_size)
     /// </summary>
     public int MinimapSizePixels => TileCount * MinimapTileSizePixels;
+
+    /// <summary>
+    /// Global height statistics for the current map (min/max height values)
+    /// </summary>
+    public HeightStats? HeightStats { get; set; }
 
     // Tile bounds tracking - actual extent of loaded tiles
     /// <summary>
@@ -156,6 +169,39 @@ public class MapViewState
     }
 
     /// <summary>
+    /// Move a layer from one position to another in the rendering order
+    /// </summary>
+    /// <param name="fromOrderIndex">Source position in LayerOrder (0=bottom, 2=top)</param>
+    /// <param name="toOrderIndex">Destination position in LayerOrder (0=bottom, 2=top)</param>
+    public void MoveLayer(int fromOrderIndex, int toOrderIndex)
+    {
+        if (fromOrderIndex == toOrderIndex) return;
+        if (fromOrderIndex < 0 || fromOrderIndex >= LayerCount) return;
+        if (toOrderIndex < 0 || toOrderIndex >= LayerCount) return;
+
+        int layerIndex = LayerOrder[fromOrderIndex];
+        if (fromOrderIndex < toOrderIndex)
+        {
+            for (int i = fromOrderIndex; i < toOrderIndex; i++)
+                LayerOrder[i] = LayerOrder[i + 1];
+        }
+        else
+        {
+            for (int i = fromOrderIndex; i > toOrderIndex; i--)
+                LayerOrder[i] = LayerOrder[i - 1];
+        }
+        LayerOrder[toOrderIndex] = layerIndex;
+    }
+
+    /// <summary>
+    /// Reset layer order to default (Minimap -> Height -> Area)
+    /// </summary>
+    public void ResetLayerOrder()
+    {
+        LayerOrder = new[] { 0, 1, 2 };
+    }
+
+    /// <summary>
     /// Fits the camera to show the current map bounds (or actual tile bounds if available)
     /// </summary>
     public void FitToMap()
@@ -190,12 +236,14 @@ public class MapViewState
         IsLoading = false;
         LoadingProgress = 0;
         MinimapTileSizePixels = 256;
+        HeightStats = null;
 
         foreach (var layer in Layers)
         {
             layer.Reset();
         }
 
+        ResetLayerOrder();
         ResetTileBounds();
         ResetCamera();
     }

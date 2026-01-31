@@ -19,6 +19,10 @@ uniform ivec3 uBlendModes;
 // Height layer settings
 uniform int uColormapType;      // 0=grayscale, 1=terrain, 2=viridis, 3=heatmap
 uniform int uColormapSize;      // Samples per colormap (typically 256)
+uniform vec2 uHeightRange;      // x=normalized min, y=normalized max (for user-adjustable range)
+
+// Layer rendering order
+uniform ivec3 uLayerOrder;      // x=bottom layer index, y=middle, z=top (0=minimap, 1=height, 2=area)
 
 // Area layer settings
 uniform int uAreaHighlightMode; // 0=show all, 1=highlight only specified areas
@@ -132,47 +136,72 @@ bool isAreaHighlighted(uint areaId)
     return false;
 }
 
+// Render a single layer by index
+vec4 renderLayer(int layerIndex, vec4 currentResult)
+{
+    if (layerIndex == 0) // Minimap
+    {
+        if (uVisibilities.x == 1)
+        {
+            vec4 minimapColor = texture(uMinimapTex, vTexCoord);
+            return compositeLayer(currentResult, minimapColor, uOpacities.x, uBlendModes.x);
+        }
+    }
+    else if (layerIndex == 1) // Height
+    {
+        if (uVisibilities.y == 1)
+        {
+            vec4 heightSample = texture(uHeightTex, vTexCoord);
+            float heightValue = heightSample.r; // Height stored in red channel (normalized 0-1)
+
+            // Remap to user-specified range
+            float rangeMin = uHeightRange.x;
+            float rangeMax = uHeightRange.y;
+            float range = rangeMax - rangeMin;
+            if (range > 0.001)
+            {
+                heightValue = (heightValue - rangeMin) / range;
+                heightValue = clamp(heightValue, 0.0, 1.0);
+            }
+
+            vec4 heightColor = sampleColormap(heightValue);
+            heightColor.a = heightSample.a; // Preserve alpha from height texture
+            return compositeLayer(currentResult, heightColor, uOpacities.y, uBlendModes.y);
+        }
+    }
+    else if (layerIndex == 2) // Area
+    {
+        if (uVisibilities.z == 1)
+        {
+            vec4 areaColor = texture(uAreaTex, vTexCoord);
+
+            // Apply area highlighting if enabled
+            if (uAreaHighlightMode == 1 && areaColor.a > 0.0)
+            {
+                // Area ID is encoded in RGB (we decode R*256 + G for up to 65536 areas)
+                uint areaId = uint(areaColor.r * 255.0) * 256u + uint(areaColor.g * 255.0);
+
+                if (!isAreaHighlighted(areaId))
+                {
+                    // Dim non-highlighted areas
+                    areaColor.rgb *= 0.3;
+                }
+            }
+
+            return compositeLayer(currentResult, areaColor, uOpacities.z, uBlendModes.z);
+        }
+    }
+    return currentResult;
+}
+
 void main()
 {
     vec4 result = vec4(0.0, 0.0, 0.0, 0.0);
 
-    // Layer 0: Minimap (bottom layer)
-    if (uVisibilities.x == 1)
-    {
-        vec4 minimapColor = texture(uMinimapTex, vTexCoord);
-        result = compositeLayer(result, minimapColor, uOpacities.x, uBlendModes.x);
-    }
-
-    // Layer 1: Height (middle layer)
-    if (uVisibilities.y == 1)
-    {
-        vec4 heightSample = texture(uHeightTex, vTexCoord);
-        float heightValue = heightSample.r; // Height stored in red channel
-        vec4 heightColor = sampleColormap(heightValue);
-        heightColor.a = heightSample.a; // Preserve alpha from height texture
-        result = compositeLayer(result, heightColor, uOpacities.y, uBlendModes.y);
-    }
-
-    // Layer 2: Area (top layer)
-    if (uVisibilities.z == 1)
-    {
-        vec4 areaColor = texture(uAreaTex, vTexCoord);
-
-        // Apply area highlighting if enabled
-        if (uAreaHighlightMode == 1 && areaColor.a > 0.0)
-        {
-            // Area ID is encoded in RGB (we decode R*256 + G for up to 65536 areas)
-            uint areaId = uint(areaColor.r * 255.0) * 256u + uint(areaColor.g * 255.0);
-
-            if (!isAreaHighlighted(areaId))
-            {
-                // Dim non-highlighted areas
-                areaColor.rgb *= 0.3;
-            }
-        }
-
-        result = compositeLayer(result, areaColor, uOpacities.z, uBlendModes.z);
-    }
+    // Render layers in order specified by uLayerOrder (bottom to top)
+    result = renderLayer(uLayerOrder.x, result);
+    result = renderLayer(uLayerOrder.y, result);
+    result = renderLayer(uLayerOrder.z, result);
 
     // If no layers are visible, show a dark background
     if (result.a < 0.01)

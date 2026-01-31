@@ -47,6 +47,24 @@ public class QuadCache : IDisposable
     public long TotalGpuMemoryBytes => _gpuQuads.Values.Sum(q => q.EstimatedMemoryBytes);
 
     /// <summary>
+    /// Estimated total CPU memory usage in bytes for cached quad data
+    /// </summary>
+    public long TotalCpuMemoryBytes
+    {
+        get
+        {
+            long total = 0;
+            foreach (var quad in _cpuQuads.Values)
+            {
+                if (quad.MinimapPixels != null) total += quad.MinimapPixels.Length;
+                if (quad.HeightPixels != null) total += quad.HeightPixels.Length;
+                if (quad.AreaPixels != null) total += quad.AreaPixels.Length;
+            }
+            return total;
+        }
+    }
+
+    /// <summary>
     /// Create a new quad cache
     /// </summary>
     /// <param name="gl">OpenGL context</param>

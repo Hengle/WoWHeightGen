@@ -33,6 +33,18 @@ public class LayerState
     /// </summary>
     public ColormapType HeightColormap { get; set; } = ColormapType.Grayscale;
 
+    /// <summary>
+    /// User-adjusted minimum height for colormap mapping in world units (only used when Type == Height).
+    /// When null, uses the global HeightStats.MinHeight.
+    /// </summary>
+    public float? HeightRangeMin { get; set; }
+
+    /// <summary>
+    /// User-adjusted maximum height for colormap mapping in world units (only used when Type == Height).
+    /// When null, uses the global HeightStats.MaxHeight.
+    /// </summary>
+    public float? HeightRangeMax { get; set; }
+
     // Area layer specific options
 
     /// <summary>
@@ -84,6 +96,8 @@ public class LayerState
         Opacity = 1.0f;
         BlendMode = BlendMode.Normal;
         HeightColormap = ColormapType.Grayscale;
+        HeightRangeMin = null;
+        HeightRangeMax = null;
         HighlightedAreaIds.Clear();
         ShowAllAreas = true;
     }

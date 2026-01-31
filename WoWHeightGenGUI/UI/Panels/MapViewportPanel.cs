@@ -42,6 +42,11 @@ public class MapViewportPanel : IPanel, IConnectionAwarePanel, IDisposable
     // Export dialog
     private ExportDialog? _exportDialog;
 
+    // Event handler references for cleanup
+    private Action<float>? _progressHandler;
+    private Action? _completeHandler;
+    private Action<Exception>? _errorHandler;
+
     public string Name => "Map Viewport";
     public bool IsVisible { get => _isVisible; set => _isVisible = value; }
 
@@ -101,6 +106,9 @@ public class MapViewportPanel : IPanel, IConnectionAwarePanel, IDisposable
 
         if (_app.Context == null) return;
 
+        // Unsubscribe from old service before disposing
+        UnsubscribeFromLoadingService();
+
         // Cancel any existing loading
         _loadingService?.Cancel();
         _loadingService?.Dispose();
@@ -117,19 +125,18 @@ public class MapViewportPanel : IPanel, IConnectionAwarePanel, IDisposable
         // Create loading service
         _loadingService = new MapLoadingService(_app.Context);
 
-        _loadingService.OnProgressChanged += progress =>
-        {
-            ViewState.LoadingProgress = progress;
-        };
-        _loadingService.OnLoadingComplete += () =>
-        {
-            ViewState.IsLoading = false;
-        };
-        _loadingService.OnLoadingError += ex =>
+        // Store handlers for later cleanup
+        _progressHandler = progress => { ViewState.LoadingProgress = progress; };
+        _completeHandler = () => { ViewState.IsLoading = false; };
+        _errorHandler = ex =>
         {
             Console.WriteLine($"Loading error: {ex.Message}");
             ViewState.IsLoading = false;
         };
+
+        _loadingService.OnProgressChanged += _progressHandler;
+        _loadingService.OnLoadingComplete += _completeHandler;
+        _loadingService.OnLoadingError += _errorHandler;
 
         // Get tile bounds from WDT immediately (fast - just reads WDT header)
         var bounds = _loadingService.GetTileBoundsFromWdt(map.WdtFileDataId);
@@ -155,11 +162,31 @@ public class MapViewportPanel : IPanel, IConnectionAwarePanel, IDisposable
     {
         // Clear state when disconnected
         ViewState.Clear();
+        UnsubscribeFromLoadingService();
         _loadingService?.Cancel();
         _loadingService?.Dispose();
         _loadingService = null;
         _quadCache?.Clear();
         _streamingService?.Clear();
+    }
+
+    /// <summary>
+    /// Unsubscribe from loading service events to prevent memory leaks
+    /// </summary>
+    private void UnsubscribeFromLoadingService()
+    {
+        if (_loadingService != null)
+        {
+            if (_progressHandler != null)
+                _loadingService.OnProgressChanged -= _progressHandler;
+            if (_completeHandler != null)
+                _loadingService.OnLoadingComplete -= _completeHandler;
+            if (_errorHandler != null)
+                _loadingService.OnLoadingError -= _errorHandler;
+        }
+        _progressHandler = null;
+        _completeHandler = null;
+        _errorHandler = null;
     }
 
     public void Update(float deltaTime)
@@ -171,6 +198,12 @@ public class MapViewportPanel : IPanel, IConnectionAwarePanel, IDisposable
     private void ProcessPendingUpdates()
     {
         if (_loadingService == null || _streamingService == null) return;
+
+        // Capture height stats when available
+        if (ViewState.HeightStats == null && _loadingService.HeightStats != null)
+        {
+            ViewState.HeightStats = _loadingService.HeightStats;
+        }
 
         // Process up to 10 updates per frame to avoid stalling
         int updatesProcessed = 0;
@@ -537,7 +570,9 @@ public class MapViewportPanel : IPanel, IConnectionAwarePanel, IDisposable
                 ViewState.Layers,
                 viewProjection,
                 quadWorldPos,
-                QuadCoord.QuadWorldSize);
+                QuadCoord.QuadWorldSize,
+                ViewState.LayerOrder,
+                ViewState.HeightStats);
         }
     }
 
@@ -686,6 +721,7 @@ public class MapViewportPanel : IPanel, IConnectionAwarePanel, IDisposable
     {
         if (_disposed) return;
 
+        UnsubscribeFromLoadingService();
         _loadingService?.Dispose();
         _compositor?.Dispose();
         _quadCache?.Dispose();

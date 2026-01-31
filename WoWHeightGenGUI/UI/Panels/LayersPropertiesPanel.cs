@@ -144,6 +144,63 @@ public class LayersPropertiesPanel : IPanel, IDisposable
         // Preview colormap
         ImGui.Spacing();
         RenderColormapPreview(layer.HeightColormap);
+
+        // Height Range Slider
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        var viewportPanel = _panelManager.GetPanel<MapViewportPanel>();
+        var heightStats = viewportPanel?.ViewState.HeightStats;
+
+        if (heightStats != null)
+        {
+            float globalMin = heightStats.MinHeight;
+            float globalMax = heightStats.MaxHeight;
+
+            ImGui.Text("Height Range");
+            ImGui.SameLine();
+            ImGui.TextDisabled($"({globalMin:F0} to {globalMax:F0})");
+
+            // Get current range (default to global if not set)
+            float rangeMin = layer.HeightRangeMin ?? globalMin;
+            float rangeMax = layer.HeightRangeMax ?? globalMax;
+
+            // Min slider
+            ImGui.Text("Min");
+            ImGui.SameLine(50);
+            ImGui.SetNextItemWidth(-1);
+            if (ImGui.SliderFloat("##HeightMin", ref rangeMin, globalMin, globalMax, "%.1f"))
+            {
+                // Ensure min <= max
+                rangeMin = Math.Min(rangeMin, rangeMax);
+                layer.HeightRangeMin = rangeMin;
+            }
+
+            // Max slider
+            ImGui.Text("Max");
+            ImGui.SameLine(50);
+            ImGui.SetNextItemWidth(-1);
+            if (ImGui.SliderFloat("##HeightMax", ref rangeMax, globalMin, globalMax, "%.1f"))
+            {
+                // Ensure max >= min
+                rangeMax = Math.Max(rangeMax, rangeMin);
+                layer.HeightRangeMax = rangeMax;
+            }
+
+            // Reset button
+            ImGui.Spacing();
+            if (ImGui.Button("Reset Range"))
+            {
+                layer.HeightRangeMin = null;
+                layer.HeightRangeMax = null;
+            }
+        }
+        else
+        {
+            ImGui.TextDisabled("Height range unavailable");
+            ImGui.TextDisabled("(load a map with height data)");
+        }
     }
 
     private void RenderColormapPreview(ColormapType colormap)
@@ -307,19 +364,37 @@ public class LayersPropertiesPanel : IPanel, IDisposable
         {
             ImGui.Indent();
 
-            // Render layers in reverse order (top layer first visually)
-            for (int i = MapViewState.LayerCount - 1; i >= 0; i--)
+            // Render layers in rendering order (top layer first visually = reversed order index)
+            for (int orderIdx = MapViewState.LayerCount - 1; orderIdx >= 0; orderIdx--)
             {
-                var layer = viewState.Layers[i];
-                var isSelected = viewState.SelectedLayerIndex == i;
+                int layerIndex = viewState.LayerOrder[orderIdx];
+                var layer = viewState.Layers[layerIndex];
+                var isSelected = viewState.SelectedLayerIndex == layerIndex;
 
-                ImGui.PushID(i);
+                ImGui.PushID(orderIdx);
 
                 // Visibility toggle (eye icon)
                 bool visible = layer.IsVisible;
                 if (ImGui.Checkbox("##vis", ref visible))
                 {
                     layer.IsVisible = visible;
+                }
+
+                ImGui.SameLine();
+
+                // Drag handle - use an invisible button so it can be dragged
+                ImGui.Button("=##drag", new Vector2(18, 18));
+
+                // Drag source - attached to the button above
+                if (ImGui.BeginDragDropSource(ImGuiDragDropFlags.None))
+                {
+                    unsafe
+                    {
+                        int payload = orderIdx;
+                        ImGui.SetDragDropPayload("LAYER_ORDER", (nint)(&payload), sizeof(int));
+                    }
+                    ImGui.Text($"Moving {layer.DisplayName}");
+                    ImGui.EndDragDropSource();
                 }
 
                 ImGui.SameLine();
@@ -333,11 +408,29 @@ public class LayersPropertiesPanel : IPanel, IDisposable
                 ImGui.Dummy(new Vector2(8, 0));
                 ImGui.SameLine();
 
-                // Layer name (selectable)
+                // Layer name (selectable) - also acts as a drop target
                 var flags = ImGuiSelectableFlags.None;
                 if (ImGui.Selectable(layer.DisplayName, isSelected, flags, new Vector2(0, 18)))
                 {
-                    viewState.SelectedLayerIndex = i;
+                    viewState.SelectedLayerIndex = layerIndex;
+                }
+
+                // Drop target - accept a layer being dropped on this row
+                if (ImGui.BeginDragDropTarget())
+                {
+                    var payload = ImGui.AcceptDragDropPayload("LAYER_ORDER");
+                    unsafe
+                    {
+                        if (payload.NativePtr != null && payload.DataSize == sizeof(int))
+                        {
+                            int sourceOrderIdx = *(int*)payload.Data;
+                            if (sourceOrderIdx != orderIdx)
+                            {
+                                viewState.MoveLayer(sourceOrderIdx, orderIdx);
+                            }
+                        }
+                    }
+                    ImGui.EndDragDropTarget();
                 }
 
                 // Opacity indicator

@@ -29,6 +29,8 @@ public class LayerCompositor : IDisposable
     private int _uBlendModes;
     private int _uColormapType;
     private int _uColormapSize;
+    private int _uHeightRange;
+    private int _uLayerOrder;
     private int _uAreaHighlightMode;
     private int _uHighlightAreas1;
     private int _uHighlightAreas2;
@@ -90,6 +92,8 @@ public class LayerCompositor : IDisposable
         _uBlendModes = _gl.GetUniformLocation(_shaderProgram, "uBlendModes");
         _uColormapType = _gl.GetUniformLocation(_shaderProgram, "uColormapType");
         _uColormapSize = _gl.GetUniformLocation(_shaderProgram, "uColormapSize");
+        _uHeightRange = _gl.GetUniformLocation(_shaderProgram, "uHeightRange");
+        _uLayerOrder = _gl.GetUniformLocation(_shaderProgram, "uLayerOrder");
         _uAreaHighlightMode = _gl.GetUniformLocation(_shaderProgram, "uAreaHighlightMode");
         _uHighlightAreas1 = _gl.GetUniformLocation(_shaderProgram, "uHighlightAreas1");
         _uHighlightAreas2 = _gl.GetUniformLocation(_shaderProgram, "uHighlightAreas2");
@@ -163,12 +167,16 @@ public class LayerCompositor : IDisposable
     /// <param name="viewProjection">View-projection matrix from Camera2D</param>
     /// <param name="quadWorldPos">Quad position in world space (top-left corner)</param>
     /// <param name="quadWorldSize">Quad size in world units (1.0 for standard tiles)</param>
+    /// <param name="layerOrder">Layer rendering order (indices into layerStates, bottom to top)</param>
+    /// <param name="heightStats">Global height statistics for range normalization</param>
     public unsafe void RenderQuad(
         QuadTextureSet quad,
         LayerState[] layerStates,
         Matrix4x4 viewProjection,
         Vector2 quadWorldPos,
-        float quadWorldSize = 1.0f)
+        float quadWorldSize = 1.0f,
+        int[]? layerOrder = null,
+        Services.HeightStats? heightStats = null)
     {
         _gl.UseProgram(_shaderProgram);
 
@@ -203,7 +211,7 @@ public class LayerCompositor : IDisposable
         _gl.Uniform1(_uColormapTex, 3);
 
         // Set layer state uniforms
-        SetLayerStateUniforms(layerStates);
+        SetLayerStateUniforms(layerStates, layerOrder, heightStats);
 
         // Draw the quad
         _gl.BindVertexArray(_vao);
@@ -216,12 +224,16 @@ public class LayerCompositor : IDisposable
     /// <summary>
     /// Render the composited layers using LayerTexture (full-screen mode for export).
     /// </summary>
+    /// <param name="layerOrder">Layer rendering order (indices into layerStates, bottom to top)</param>
+    /// <param name="heightStats">Global height statistics for range normalization</param>
     public unsafe void Render(
         LayerTexture? minimapTexture,
         LayerTexture? heightTexture,
         LayerTexture? areaTexture,
         LayerState[] layerStates,
-        Matrix4x4 viewProjection)
+        Matrix4x4 viewProjection,
+        int[]? layerOrder = null,
+        Services.HeightStats? heightStats = null)
     {
         _gl.UseProgram(_shaderProgram);
 
@@ -256,7 +268,7 @@ public class LayerCompositor : IDisposable
         _gl.Uniform1(_uColormapTex, 3);
 
         // Set layer state uniforms
-        SetLayerStateUniforms(layerStates);
+        SetLayerStateUniforms(layerStates, layerOrder, heightStats);
 
         // Draw the quad
         _gl.BindVertexArray(_vao);
@@ -269,7 +281,7 @@ public class LayerCompositor : IDisposable
     /// <summary>
     /// Set layer state uniforms (shared between Render and RenderQuad)
     /// </summary>
-    private unsafe void SetLayerStateUniforms(LayerState[] layerStates)
+    private unsafe void SetLayerStateUniforms(LayerState[] layerStates, int[]? layerOrder = null, Services.HeightStats? heightStats = null)
     {
         var minimapState = layerStates[(int)LayerType.Minimap];
         var heightState = layerStates[(int)LayerType.Height];
@@ -292,6 +304,33 @@ public class LayerCompositor : IDisposable
         // Set height colormap
         _gl.Uniform1(_uColormapType, (int)heightState.HeightColormap);
         _gl.Uniform1(_uColormapSize, ColormapPresets.SamplesPerColormap);
+
+        // Set height range (normalized 0-1 relative to global height stats)
+        float normalizedMin = 0.0f;
+        float normalizedMax = 1.0f;
+        if (heightStats != null)
+        {
+            float globalMin = heightStats.MinHeight;
+            float globalMax = heightStats.MaxHeight;
+            float globalRange = globalMax - globalMin;
+
+            if (globalRange > 0)
+            {
+                float userMin = heightState.HeightRangeMin ?? globalMin;
+                float userMax = heightState.HeightRangeMax ?? globalMax;
+
+                normalizedMin = (userMin - globalMin) / globalRange;
+                normalizedMax = (userMax - globalMin) / globalRange;
+            }
+        }
+        _gl.Uniform2(_uHeightRange, normalizedMin, normalizedMax);
+
+        // Set layer order
+        int[] order = layerOrder ?? new[] { 0, 1, 2 };
+        fixed (int* orderPtr = order)
+        {
+            _gl.Uniform3(_uLayerOrder, 1, orderPtr);
+        }
 
         // Set area highlight settings
         _gl.Uniform1(_uAreaHighlightMode, areaState.ShowAllAreas ? 0 : 1);

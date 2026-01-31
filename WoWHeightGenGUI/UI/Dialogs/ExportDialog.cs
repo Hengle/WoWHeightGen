@@ -52,6 +52,9 @@ public class ExportDialog
     private Image<Rgba32>? _cachedHeightImage;
     private Image<Rgba32>? _cachedAreaImage;
 
+    // Cancellation support for background export
+    private CancellationTokenSource? _exportCts;
+
     private static readonly string[] ExportTypeOptions = { "Composed Image", "Minimap Only", "Height Only", "Area Only", "All Layers" };
     private static readonly string[] FormatOptions = { "PNG", "JPEG", "BMP", "WebP" };
     private static readonly string[] FormatExtensions = { ".png", ".jpg", ".bmp", ".webp" };
@@ -98,6 +101,8 @@ public class ExportDialog
     /// </summary>
     public void Close()
     {
+        // Cancel any running export
+        _exportCts?.Cancel();
         _isOpen = false;
     }
 
@@ -422,6 +427,12 @@ public class ExportDialog
         _isExporting = true;
         _exportProgress = 0;
 
+        // Cancel any previous export and create new cancellation token
+        _exportCts?.Cancel();
+        _exportCts?.Dispose();
+        _exportCts = new CancellationTokenSource();
+        var ct = _exportCts.Token;
+
         // Capture settings for background thread
         var exportType = _exportTypeIndex;
         var cropToData = _cropToData;
@@ -439,16 +450,25 @@ public class ExportDialog
         {
             try
             {
+                ct.ThrowIfCancellationRequested();
+
                 if (exportType == 4) // All Layers
                 {
-                    ExportAllLayersBackground(viewState, loadingService, mapContext, cropToData, scalePercent, formatIndex, jpegQuality, outputFolder, fileName);
+                    ExportAllLayersBackground(viewState, loadingService, mapContext, cropToData, scalePercent, formatIndex, jpegQuality, outputFolder, fileName, ct);
                 }
                 else
                 {
-                    ExportSingleImageBackground(viewState, loadingService, mapContext, exportType, cropToData, scalePercent, formatIndex, jpegQuality, outputFolder, fileName);
+                    ExportSingleImageBackground(viewState, loadingService, mapContext, exportType, cropToData, scalePercent, formatIndex, jpegQuality, outputFolder, fileName, ct);
                 }
 
-                _successMessage = "Export completed successfully!";
+                if (!ct.IsCancellationRequested)
+                {
+                    _successMessage = "Export completed successfully!";
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                _errorMessage = "Export was cancelled.";
             }
             catch (Exception ex)
             {
@@ -466,7 +486,7 @@ public class ExportDialog
                 _cachedAreaImage?.Dispose();
                 _cachedAreaImage = null;
             }
-        });
+        }, ct);
     }
 
     /// <summary>
@@ -583,9 +603,12 @@ public class ExportDialog
         int formatIndex,
         int jpegQuality,
         string outputFolder,
-        string fileName)
+        string fileName,
+        CancellationToken ct = default)
     {
         if (viewState == null) return;
+
+        ct.ThrowIfCancellationRequested();
 
         var (width, height) = CalculateOutputResolutionFor(viewState, loadingService, exportType, cropToData, scalePercent);
 
@@ -610,6 +633,8 @@ public class ExportDialog
 
         _exportProgress = 0.6f;
         Console.WriteLine($"[Export] Rendered image: {image?.Width}x{image?.Height}");
+
+        ct.ThrowIfCancellationRequested();
 
         if (image == null)
         {
@@ -642,9 +667,12 @@ public class ExportDialog
         int formatIndex,
         int jpegQuality,
         string outputFolder,
-        string fileName)
+        string fileName,
+        CancellationToken ct = default)
     {
         if (viewState == null) return;
+
+        ct.ThrowIfCancellationRequested();
 
         string extension = FormatExtensions[formatIndex];
         var baseName = Path.GetFileNameWithoutExtension(fileName);
@@ -660,6 +688,8 @@ public class ExportDialog
             }
         }
 
+        ct.ThrowIfCancellationRequested();
+
         // Export height
         _exportProgress = 0.4f;
         var heightSize = CalculateLayerResolutionFor(viewState, loadingService, LayerType.Height, cropToData, scalePercent);
@@ -670,6 +700,8 @@ public class ExportDialog
                 SaveImage(heightImage, Path.Combine(outputFolder, $"{baseName}_height{extension}"), formatIndex, jpegQuality);
             }
         }
+
+        ct.ThrowIfCancellationRequested();
 
         // Export area
         _exportProgress = 0.7f;
@@ -811,9 +843,11 @@ public class ExportDialog
         // Create result image at cropped size (or full size if not cropping)
         var result = new Image<Rgba32>(resultWidth, resultHeight);
 
-        // Composite each visible layer
-        foreach (var layerType in new[] { LayerType.Minimap, LayerType.Height, LayerType.Area })
+        // Composite each visible layer in rendering order (bottom to top)
+        for (int i = 0; i < viewState.LayerOrder.Length; i++)
         {
+            int layerIndex = viewState.LayerOrder[i];
+            var layerType = (LayerType)layerIndex;
             var state = viewState.GetLayer(layerType);
             if (!state.IsVisible || state.Opacity <= 0) continue;
 
@@ -849,10 +883,12 @@ public class ExportDialog
 
             using (processedLayer)
             {
-                // Apply colormap for height layer
+                // Apply colormap for height layer (with range)
                 if (layerType == LayerType.Height)
                 {
-                    ApplyColormapToImage(processedLayer, viewState.GetLayer(LayerType.Height).HeightColormap);
+                    var heightState = viewState.GetLayer(LayerType.Height);
+                    ApplyColormapToImage(processedLayer, heightState.HeightColormap,
+                        heightState.HeightRangeMin, heightState.HeightRangeMax, viewState.HeightStats);
                 }
 
                 // Scale layer to match result size if different
@@ -921,11 +957,13 @@ public class ExportDialog
             result = sourceImage.Clone();
         }
 
-        // Apply colormap for height layer
+        // Apply colormap for height layer (with range)
         if (layer == LayerType.Height)
         {
             Console.WriteLine("[Export] Applying colormap...");
-            ApplyColormapToImage(result, viewState.GetLayer(LayerType.Height).HeightColormap);
+            var heightState = viewState.GetLayer(LayerType.Height);
+            ApplyColormapToImage(result, heightState.HeightColormap,
+                heightState.HeightRangeMin, heightState.HeightRangeMax, viewState.HeightStats);
         }
 
         // Scale to output size if needed (crop was already applied above)
@@ -940,10 +978,33 @@ public class ExportDialog
     }
 
     /// <summary>
-    /// Apply colormap to an image in-place
+    /// Apply colormap to an image in-place, with optional height range remapping
     /// </summary>
-    private void ApplyColormapToImage(Image<Rgba32> image, ColormapType colormapType)
+    private void ApplyColormapToImage(Image<Rgba32> image, ColormapType colormapType,
+        float? rangeMin = null, float? rangeMax = null, HeightStats? stats = null)
     {
+        // Calculate normalized range for remapping
+        float normalizedMin = 0;
+        float normalizedMax = 1;
+
+        if (stats != null)
+        {
+            float globalMin = stats.MinHeight;
+            float globalMax = stats.MaxHeight;
+            float globalRange = globalMax - globalMin;
+
+            if (globalRange > 0)
+            {
+                float userMin = rangeMin ?? globalMin;
+                float userMax = rangeMax ?? globalMax;
+
+                normalizedMin = (userMin - globalMin) / globalRange;
+                normalizedMax = (userMax - globalMin) / globalRange;
+            }
+        }
+
+        float remapRange = normalizedMax - normalizedMin;
+
         image.ProcessPixelRows(accessor =>
         {
             for (int y = 0; y < accessor.Height; y++)
@@ -953,6 +1014,14 @@ public class ExportDialog
                 {
                     var pixel = rowSpan[x];
                     float normalized = pixel.R / 255.0f; // Height is in R channel
+
+                    // Remap to user-specified range
+                    if (remapRange > 0.001f)
+                    {
+                        normalized = (normalized - normalizedMin) / remapRange;
+                        normalized = Math.Clamp(normalized, 0, 1);
+                    }
+
                     var color = GetColormapColor(colormapType, normalized);
                     rowSpan[x] = new Rgba32(color.r, color.g, color.b, pixel.A);
                 }
